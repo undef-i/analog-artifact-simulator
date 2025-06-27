@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analog Video Artifact Simulator</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css"
+        integrity="sha384-GvrOXuhMATgEsSwCs4smul74iXGOixntILdUW9XmUC6+HX0sLNAK3q71HotJqlAn" crossorigin="anonymous">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"
+        integrity="sha384-cpW21h6RZv/phavutF+AuVYrr+dA8xD9zs6FwLpaCct6O9ctzYFfFr4dgmgccOTx"
+        crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"
+        integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05"
+        crossorigin="anonymous"></script>
+    <style>
+        body {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 10px;
+        }
+
+        .katex-display {
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 10px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Analog Artifact Simulator</h1>
+
+    <p>A tool for simulating analog video artifacts including dot crawl, ringing, chroma noise, color bleeding, and VHS
+        effects. Originally intended for analog artifact removal neural networks but also useful for artistic purposes.
+    </p>
+
+    <p><em>This implementation is inspired by the <a href="https://ntsc.rs" target="_blank">ntsc-rs</a> project.</em>
+    </p>
+
+
+    <div id="wasmStatus">Loading WebAssembly module...</div>
+
+    <h3>Select Image</h3>
+    <input type="file" id="fileInput" accept="image/*">
+
+    <h3>Presets</h3>
+    <button onclick="loadPreset('default')">Default</button>
+    <button onclick="loadPreset('composite')">Composite</button>
+    <button onclick="loadPreset('vhs')">VHS</button>
+    <button onclick="loadPreset('broadcast')">Broadcast</button>
+    <button onclick="loadPreset('vanilla')">Vanilla</button>
+
+    <h3>Controls</h3>
+    <div>Composite Preemphasis: <input type="range" id="compositePreemphasis" min="0" max="1" step="0.01" value="0.5">
+        <span id="compositePreemphasisValue">0.5</span></div>
+    <div>Color Bleed: <input type="range" id="colorBleed" min="0" max="1" step="0.01" value="0.3"> <span
+            id="colorBleedValue">0.3</span></div>
+    <div>Ringing: <input type="range" id="ringing" min="0" max="1" step="0.01" value="0.2"> <span
+            id="ringingValue">0.2</span></div>
+    <div>Video Noise: <input type="range" id="videoNoise" min="0" max="1" step="0.01" value="0.05"> <span
+            id="videoNoiseValue">0.05</span></div>
+    <div>Chroma Noise: <input type="range" id="videoChromaNoise" min="0" max="1" step="0.01" value="0.02"> <span
+            id="videoChromaNoiseValue">0.02</span></div>
+    <div>VHS Luma: <input type="range" id="vhsLumaLowpass" min="0" max="1" step="0.01" value="0.5"> <span
+            id="vhsLumaLowpassValue">0.5</span></div>
+    <div>VHS Chroma: <input type="range" id="vhsChromaLowpass" min="0" max="1" step="0.01" value="0.3"> <span
+            id="vhsChromaLowpassValue">0.3</span></div>
+    <div>VHS Sharpen: <input type="range" id="vhsSharpen" min="0" max="1" step="0.01" value="0.2"> <span
+            id="vhsSharpenValue">0.2</span></div>
+
+    <div><input type="checkbox" id="enableCompression" checked> Enable auto-resize</div>
+    <div id="compressionSettings">
+        Max Width (0 = no limit): <input type="number" id="maxWidth" min="0" max="4096" value="480"><br>
+        Max Height (0 = no limit): <input type="number" id="maxHeight" min="0" max="4096" value="0">
+    </div>
+
+    <button id="processBtn" onclick="processImage()" disabled>Process Image</button>
+
+    <div id="loading" style="display: none;">Processing image...</div>
+    <div id="error" style="display: none; color: red;"></div>
+
+    <div id="imageDisplay" style="display: none;">
+        <h3>Original</h3>
+        <img id="originalImage" style="max-width: 400px;">
+        <h3>Processed</h3>
+        <img id="processedImage" style="max-width: 400px;">
+        <div id="processTime"></div>
+    </div>
+    <div class="tech-overview">
+        <h3>Technical Implementation</h3>
+        <p>The technical foundation of this simulation is a comprehensive digital signal processing pipeline implemented
+            in Go, meticulously engineered to emulate the complex artifacts and signal degradations inherent in the NTSC
+            analog video standard. The system operates at the fundamental sampling rate of 14.318 MHz, corresponding to
+            four times the NTSC color subcarrier frequency of 3.579545 MHz, ensuring accurate temporal and spectral
+            representation of the analog signal characteristics.</p>
+
+        <h4>Color Space Transformation and Quantization</h4>
+        <p>The process initiates with the transformation of the input image's color representation from the conventional
+            RGB model to the YIQ color space, a critical step that decouples luminance (Y) from chrominance (I and Q)
+            components. This separation is fundamental to NTSC encoding, as it enables backward compatibility with
+            monochrome receivers while facilitating color transmission. The forward transformation from RGB to YIQ is
+            defined by the standardized matrix operation:</p>
+        \[
+        \begin{bmatrix} Y \\ I \\ Q \end{bmatrix} =
+        \begin{bmatrix} 0.299 & 0.587 & 0.114 \\ 0.596 & -0.274 & -0.322 \\ 0.211 & -0.523 & 0.312 \end{bmatrix}
+        \begin{bmatrix} R \\ G \\ B \end{bmatrix}
+        \]
+        <p>In the implementation, the Y component is computed first using the weighted sum \(Y = 0.299R + 0.587G +
+            0.114B\), followed by the chrominance components calculated as \(I = -0.27(B-Y) + 0.74(R-Y)\) and \(Q =
+            0.41(B-Y) + 0.48(R-Y)\). To maintain numerical precision and facilitate subsequent integer arithmetic
+            operations, the YIQ components are scaled by a factor of 256 and stored as fixed-point integers. The inverse
+            transformation for display purposes employs the matrix:</p>
+        \[
+        \begin{bmatrix} R \\ G \\ B \end{bmatrix} =
+        \begin{bmatrix} 1.000 & 0.956 & 0.621 \\ 1.000 & -0.272 & -0.647 \\ 1.000 & -1.106 & 1.703 \end{bmatrix}
+        \begin{bmatrix} Y \\ I \\ Q \end{bmatrix}
+        \]
+
+        <h4>Analog Bandwidth Simulation and Filtering</h4>
+        <p>The analog transmission medium imposes severe bandwidth constraints on the video signal, necessitating
+            sophisticated filtering to simulate these limitations accurately. The system employs a first-order Infinite
+            Impulse Response (IIR) low-pass filter, characterized by the recursive difference equation:</p>
+        \[ y[n] = \alpha \cdot y[n-1] + (1-\alpha) \cdot x[n] \]
+        <p>where the filter coefficient \(\alpha\) is derived from the desired cutoff frequency \(f_c\) and sampling
+            rate \(f_s\) through the relationship \(\alpha = e^{-2\pi f_c / f_s}\). The NTSC standard specifies distinct
+            bandwidth allocations for luminance and chrominance: the Y channel extends to approximately 4.2 MHz, while
+            the I and Q channels are limited to 1.3 MHz and 0.4 MHz respectively. These asymmetric bandwidth constraints
+            are implemented through separate filter instances with appropriately configured cutoff frequencies.</p>
+
+        <h4>Composite Pre-emphasis and De-emphasis</h4>
+        <p>To compensate for the high-frequency attenuation inherent in analog transmission and enhance perceived image
+            sharpness, the NTSC system incorporates pre-emphasis and de-emphasis mechanisms. The pre-emphasis stage
+            selectively amplifies higher frequencies in the luminance channel through a high-pass filtering operation
+            combined with gain control. The mathematical formulation is expressed as:</p>
+        \[ Y_{out}[n] = Y_{in}[n] + \epsilon \cdot (Y_{in}[n] - \alpha_{hp} \cdot Y_{in}[n-1]) \]
+        <p>where \(\epsilon\) represents the pre-emphasis coefficient controlling the magnitude of high-frequency boost,
+            and \(\alpha_{hp}\) defines the high-pass filter characteristics. This process effectively creates a
+            "peaking" response that counteracts subsequent low-pass filtering effects while introducing the
+            characteristic "sharpening" artifacts observed in analog video systems.</p>
+
+        <h4>Chrominance Subcarrier Modulation and Demodulation Artifacts</h4>
+        <p>In the NTSC composite signal, chrominance information is quadrature-modulated onto a 3.579545 MHz color
+            subcarrier using the I and Q components as in-phase and quadrature signals respectively. The modulated
+            chrominance signal is mathematically represented as:</p>
+        \[ C(t) = I(t) \cos(2\pi f_{sc} t) + Q(t) \sin(2\pi f_{sc} t) \]
+        <p>where \(f_{sc}\) denotes the subcarrier frequency. Demodulation imperfections in analog receivers often
+            result in spatial misalignment between luminance and chrominance components, manifesting as the
+            characteristic "color bleeding" artifact. This phenomenon is simulated by applying independent spatial
+            offsets to the I and Q components:</p>
+        \[ I_{out}(x, y) = I_{in}(x - \Delta x_I, y - \Delta y_I) \]
+        \[ Q_{out}(x, y) = Q_{in}(x - \Delta x_Q, y - \Delta y_Q) \]
+        <p>where \((\Delta x_I, \Delta y_I)\) and \((\Delta x_Q, \Delta y_Q)\) represent user-configurable displacement
+            vectors that simulate timing errors and phase distortions in the demodulation process.</p>
+
+        <h4>Frequency Domain Ringing and Gibbs Phenomena</h4>
+        <p>Sharp transitions in the video signal, when subjected to bandwidth-limited transmission, exhibit
+            characteristic "ringing" artifacts due to the Gibbs phenomenon. This effect is particularly pronounced at
+            high-contrast edges where the finite bandwidth of the transmission medium cannot adequately represent the
+            sharp discontinuities. The simulation implements this through frequency-domain processing using the Discrete
+            Fourier Transform:</p>
+        \[ X[k] = \sum_{n=0}^{N-1} x[n] e^{-j2\pi kn/N} \]
+        <p>A custom band-pass filter \(H[k]\) is applied in the frequency domain to selectively attenuate or emphasize
+            specific frequency components, particularly those around the color subcarrier frequency. The filter response
+            is designed to emulate the characteristics of analog notch filters used in NTSC decoders:</p>
+        \[ H[k] = \begin{cases}
+        1 & \text{if } |k - k_{sc}| > \Delta k \\
+        \beta & \text{if } |k - k_{sc}| \leq \Delta k
+        \end{cases} \]
+        <p>where \(k_{sc}\) corresponds to the subcarrier frequency bin, \(\Delta k\) defines the notch width, and
+            \(\beta\) represents the attenuation factor. The processed signal is then transformed back to the time
+            domain using the Inverse Discrete Fourier Transform.</p>
+
+        <h4>Stochastic Noise Generation and Temporal Correlation</h4>
+        <p>Analog video signals are inherently susceptible to various noise sources, including thermal noise,
+            electromagnetic interference, and quantization artifacts. The system implements a sophisticated noise
+            generation module based on the XorWow pseudo-random number generator, which provides excellent statistical
+            properties and computational efficiency. The generator maintains internal state variables \((x, y, z, w, v,
+            d)\) and produces pseudo-random sequences through the recurrence relation:</p>
+        \[ \begin{align}
+        t &= x \oplus (x \gg 2) \\
+        x &= y, \quad y = z, \quad z = w, \quad w = v \\
+        v &= (v \oplus (v \ll 4)) \oplus (t \oplus (t \ll 1)) \\
+        d &= d + 362437
+        \end{align} \]
+        <p>The system provides two distinct noise processing modes to accommodate different computational requirements
+            and accuracy demands. The non-precise mode employs a computationally efficient approach where a large
+            pre-computed noise array is smoothed using a simple exponential moving average filter with \(\alpha = 0.5\).
+            In contrast, the precise mode generates noise dynamically for each scanline, implementing temporal
+            correlation through an accumulative smoothing process:</p>
+        \[ n[i] = \frac{n[i-1] + r[i]}{2} + \frac{n[i-1] + r[i-1]}{4} \]
+        <p>where \(n[i]\) represents the correlated noise value at pixel \(i\), and \(r[i]\) denotes the raw random
+            number. This formulation introduces both spatial and temporal correlation, more accurately reflecting the
+            characteristics of real analog noise.</p>
+
+        <h4>VHS Tape Degradation Modeling</h4>
+        <p>The simulation incorporates detailed modeling of VHS tape-specific degradations to enhance authenticity. The
+            mechanical instabilities inherent in VHS playback systems manifest as time-base errors, simulated through
+            the "edge wave" effect. This is implemented by generating random horizontal displacement values
+            \(\delta[j]\) for each scanline \(j\), followed by low-pass filtering to create smooth, correlated
+            variations:</p>
+        \[ \delta_{filtered}[j] = \alpha_{wave} \cdot \delta_{filtered}[j-1] + (1-\alpha_{wave}) \cdot \delta[j] \]
+        <p>The head-switching noise effect replicates the signal disruption that occurs during the transition between
+            video heads in the helical scan mechanism. This is modeled as a localized distortion band, typically
+            positioned in the lower portion of the frame, where both geometric displacement and additive noise are
+            applied with increased intensity. The mathematical representation involves a spatial weighting function
+            \(w(y)\) that defines the affected region:</p>
+        \[ w(y) = \begin{cases}
+        0 & \text{if } y < y_{start} \\ \sin^2\left(\frac{\pi(y - y_{start})}{y_{end} - y_{start}}\right) & \text{if }
+            y_{start} \leq y \leq y_{end} \\ 0 & \text{if } y> y_{end}
+            \end{cases} \]
+            <p>Chrominance degradation, a common artifact in aged VHS tapes, is simulated through controlled attenuation
+                of the I and Q components using a degradation factor \(\gamma\):</p>
+            \[ I_{degraded} = \gamma \cdot I_{original}, \quad Q_{degraded} = \gamma \cdot Q_{original} \]
+            <p>where \(\gamma\) ranges from 0 (complete chroma loss) to 1 (no degradation), allowing for precise control
+                over the degree of color desaturation.</p>
+
+            <h4>Interlaced Field Processing and Temporal Artifacts</h4>
+            <p>The NTSC standard employs interlaced scanning, where each frame consists of two fields containing
+                alternating scanlines. This temporal sampling introduces specific artifacts that must be accurately
+                modeled. The system processes odd and even fields independently, maintaining separate processing
+                contexts to preserve the temporal characteristics of the interlaced format. Field-specific artifacts,
+                such as inter-field motion blur and temporal aliasing, are simulated through controlled blending of
+                adjacent field data:</p>
+            \[ F_{blended}[i] = \alpha_{temporal} \cdot F_{current}[i] + (1-\alpha_{temporal}) \cdot F_{previous}[i] \]
+            <p>where \(F_{current}\) and \(F_{previous}\) represent the current and previous field data respectively,
+                and \(\alpha_{temporal}\) controls the degree of temporal blending. This comprehensive signal processing
+                pipeline, operating at the authentic NTSC sampling rate and incorporating mathematically rigorous models
+                of analog video artifacts, successfully reproduces the complex visual characteristics of vintage
+                television and VHS playback systems with exceptional fidelity and technical accuracy.</p>
+    </div>
+
+    <script src="wasm_exec.js"></script>
+    <script>
+        let wasmReady = false;
+        let currentImageData = null;
+
+        async function loadWasm() {
+            const go = new Go();
+            const result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
+            go.run(result.instance);
+            wasmReady = true;
+            document.getElementById('wasmStatus').textContent = 'Ready to process images!';
+        }
+
+        loadWasm().catch(err => {
+            console.error('Failed to load WASM:', err);
+            document.getElementById('wasmStatus').textContent = 'Failed to load WebAssembly module';
+        });
+
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showError('Please select an image file');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                currentImageData = e.target.result;
+                document.getElementById('originalImage').src = currentImageData;
+                document.getElementById('imageDisplay').style.display = 'block';
+                document.getElementById('processBtn').disabled = !wasmReady;
+                if (wasmReady) {
+                    processImage();
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function updateSliderValues() {
+            const sliders = document.querySelectorAll('input[type="range"]');
+            sliders.forEach(slider => {
+                const valueElement = document.getElementById(slider.id + 'Value');
+                if (valueElement) {
+                    valueElement.textContent = slider.value;
+                    slider.addEventListener('input', () => {
+                        valueElement.textContent = slider.value;
+                    });
+                }
+            });
+        }
+
+        function loadPreset(presetName) {
+            if (!wasmReady) {
+                showError('WebAssembly module not ready');
+                return;
+            }
+
+            try {
+                let config;
+                if (presetName === 'vanilla') {
+                    config = {
+                        CompositePreemphasis: 0.5,
+                        ColorBleedHoriz: 3,
+                        Ringing: 0.2,
+                        VideoNoise: 5,
+                        VideoChromaNoise: 2,
+                        VHSOutSharpen: 0.5,
+                        VHSChromaVertBlend: true,
+                        VHSSharpen: 0.2
+                    };
+                } else {
+                    const result = getPreset(presetName);
+                    if (result.error) {
+                        showError(result.error);
+                        return;
+                    }
+                    config = JSON.parse(result.config);
+                }
+
+                document.getElementById('compositePreemphasis').value = config.CompositePreemphasis || 0;
+                document.getElementById('colorBleed').value = (config.ColorBleedHoriz || 0) / 10;
+                document.getElementById('ringing').value = config.Ringing || 0;
+                document.getElementById('videoNoise').value = (config.VideoNoise || 0) / 100;
+                document.getElementById('videoChromaNoise').value = (config.VideoChromaNoise || 0) / 100;
+                document.getElementById('vhsLumaLowpass').value = config.VHSOutSharpen || 0;
+                document.getElementById('vhsChromaLowpass').value = config.VHSChromaVertBlend ? 0.3 : 0;
+                document.getElementById('vhsSharpen').value = config.VHSSharpen || 0;
+
+                updateSliderValues();
+            } catch (error) {
+                showError('Failed to load preset: ' + error.message);
+            }
+        }
+
+        function processImage() {
+            if (!wasmReady) {
+                showError('WebAssembly module not ready');
+                return;
+            }
+
+            if (!currentImageData) {
+                showError('Please upload an image first');
+                return;
+            }
+
+            const loading = document.getElementById('loading');
+            const processBtn = document.getElementById('processBtn');
+            const errorDiv = document.getElementById('error');
+            const processTimeDiv = document.getElementById('processTime');
+            loading.style.display = 'block';
+            processBtn.disabled = true;
+            errorDiv.style.display = 'none';
+            processTimeDiv.textContent = '';
+            const startTime = performance.now();
+            try {
+                const config = {
+                    CompositePreemphasis: parseFloat(document.getElementById('compositePreemphasis').value),
+                    CompositePreemphasisCut: 1000000.0,
+                    ColorBleedBefore: true,
+                    ColorBleedHoriz: Math.round(parseFloat(document.getElementById('colorBleed').value) * 10),
+                    ColorBleedVert: 0,
+                    Ringing: parseFloat(document.getElementById('ringing').value),
+                    EnableRinging2: false,
+                    RingingPower: 2,
+                    RingingShift: 0,
+                    FreqNoiseSize: 0,
+                    FreqNoiseAmplitude: 2,
+                    CompositeInChromaLowpass: true,
+                    CompositeOutChromaLowpass: true,
+                    CompositeOutChromaLowpassLite: true,
+                    VideoNoise: Math.round(parseFloat(document.getElementById('videoNoise').value) * 100),
+                    VideoChromaNoise: Math.round(parseFloat(document.getElementById('videoChromaNoise').value) * 100),
+                    VideoChromaPhaseNoise: Math.round(0.01 * 100),
+                    VideoChromaLoss: 0,
+                    SubcarrierAmplitude: 50,
+                    SubcarrierAmplitudeBack: 50,
+                    EmulatingVHS: false,
+                    NoColorSubcarrier: false,
+                    VHSChromaVertBlend: true,
+                    VHSSVideoOut: false,
+                    VHSOutSharpen: parseFloat(document.getElementById('vhsLumaLowpass').value),
+                    VHSEdgeWave: Math.round(0.1 * 100),
+                    VHSHeadSwitching: false,
+                    VHSHeadSwitchingPhaseNoise: 0.05,
+                    OutputNTSC: true,
+                    VideoScanlinePhaseShift: 180,
+                    VideoScanlinePhaseShiftOffset: 0,
+                    OutputVHSTapeSpeed: 0
+                };
+
+                const enableCompression = document.getElementById('enableCompression').checked;
+                const maxWidth = enableCompression ? parseInt(document.getElementById('maxWidth').value) || 0 : 0;
+                const maxHeight = enableCompression ? parseInt(document.getElementById('maxHeight').value) || 0 : 0;
+
+                const request = {
+                    imageData: currentImageData,
+                    config: config,
+                    maxWidth: maxWidth,
+                    maxHeight: maxHeight
+                };
+
+                const result = processNTSC(JSON.stringify(request));
+
+                if (result.error) {
+                    showError(result.error);
+                } else {
+                    document.getElementById('processedImage').src = result.imageData;
+                }
+                const endTime = performance.now();
+                processTimeDiv.textContent = 'Processing time: ' + (endTime - startTime).toFixed(1) + ' ms';
+            } catch (error) {
+                showError('Processing failed: ' + error.message);
+            } finally {
+                loading.style.display = 'none';
+                processBtn.disabled = false;
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function toggleCompressionSettings() {
+            const enableCompression = document.getElementById('enableCompression');
+            const compressionSettings = document.getElementById('compressionSettings');
+
+            compressionSettings.style.display = enableCompression.checked ? 'block' : 'none';
+        }
+
+        document.getElementById('enableCompression').addEventListener('change', toggleCompressionSettings);
+
+        updateSliderValues();
+        toggleCompressionSettings();
+
+        document.addEventListener("DOMContentLoaded", function () {
+            renderMathInElement(document.body, {
+                delimiters: [
+                    { left: '\\(', right: '\\)', display: false },
+                    { left: '\\[', right: '\\]', display: true }
+                ]
+            });
+        });
+    </script>
+</body>
+
+</html>
