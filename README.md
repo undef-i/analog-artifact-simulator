@@ -1,6 +1,6 @@
 # Analog Artifact Simulator
 
-A tool for simulating analog video artifacts including dot crawl, ringing, chroma noise, color bleeding, and VHS effects.
+A tool for simulating analog artifacts including dot crawl, ringing, chroma noise, color bleeding, and VHS effects.
 
 ## Build
 
