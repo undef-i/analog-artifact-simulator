@@ -5,49 +5,72 @@ import (
 	"math/cmplx"
 )
 
+func bitReverseCopy(x []complex128) []complex128 {
+	N := len(x)
+	result := make([]complex128, N)
+	for i := 0; i < N; i++ {
+		rev := 0
+		for j := 0; 1<<j < N; j++ {
+			rev = (rev << 1) | ((i >> j) & 1)
+		}
+		result[rev] = x[i]
+	}
+	return result
+}
+
 func fft(x []complex128) []complex128 {
 	N := len(x)
-	if N <= 1 {
-		return x
+	if N == 0 || (N&(N-1)) != 0 { // Check if N is a power of 2
+		// Handle non-power-of-2 sizes if necessary, or return error
+		return nil // For simplicity, returning nil for now
 	}
 
-	even := make([]complex128, N/2)
-	odd := make([]complex128, N/2)
-	for i := 0; i < N/2; i++ {
-		even[i] = x[2*i]
-		odd[i] = x[2*i+1]
+	data := bitReverseCopy(x)
+
+	for s := 1; 1<<s <= N; s++ {
+		m := 1 << s
+		wm := cmplx.Exp(complex(0, -2*math.Pi/float64(m)))
+		for k := 0; k < N; k += m {
+			w := complex(1, 0)
+			for j := 0; j < m/2; j++ {
+				t := data[k+j+m/2] * w
+				u := data[k+j]
+				data[k+j] = u + t
+				data[k+j+m/2] = u - t
+				w *= wm
+			}
+		}
 	}
-
-	even = fft(even)
-	odd = fft(odd)
-
-	result := make([]complex128, N)
-	for k := 0; k < N/2; k++ {
-		angle := -2 * math.Pi * float64(k) / float64(N)
-		tw := cmplx.Rect(1, angle) * odd[k]
-		result[k] = even[k] + tw
-		result[k+N/2] = even[k] - tw
-	}
-
-	return result
+	return data
 }
 
 func ifft(x []complex128) []complex128 {
 	N := len(x)
-
-	x_conj := make([]complex128, N)
-	for i := 0; i < N; i++ {
-		x_conj[i] = cmplx.Conj(x[i])
+	if N == 0 || (N&(N-1)) != 0 { // Check if N is a power of 2
+		return nil // For simplicity, returning nil for now
 	}
 
-	y := fft(x_conj)
+	data := bitReverseCopy(x)
 
-	result := make([]complex128, N)
-	for i := 0; i < N; i++ {
-		result[i] = cmplx.Conj(y[i]) / complex(float64(N), 0)
+	for s := 1; 1<<s <= N; s++ {
+		m := 1 << s
+		wm := cmplx.Exp(complex(0, 2*math.Pi/float64(m)))
+		for k := 0; k < N; k += m {
+			w := complex(1, 0)
+			for j := 0; j < m/2; j++ {
+				t := data[k+j+m/2] * w
+				u := data[k+j]
+				data[k+j] = u + t
+				data[k+j+m/2] = u - t
+				w *= wm
+			}
+		}
 	}
 
-	return result
+	for i := 0; i < N; i++ {
+		data[i] /= complex(float64(N), 0)
+	}
+	return data
 }
 
 func fftShift(x []complex128) []complex128 {

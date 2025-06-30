@@ -2,7 +2,9 @@ package ntsc
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"time"
 	"analog-artifact-simulator/pkg/image"
 	"analog-artifact-simulator/pkg/random"
 )
@@ -281,76 +283,108 @@ func (p *NtscProcessor) yiq2bgr(yiq [][][]int32, dst *image.Image, field int) {
 			}
 
 			dst.SetPixel(x, y, image.Pixel{
-				R: float64(r),
-				G: float64(g),
-				B: float64(b),
+				R: uint8(r),
+				G: uint8(g),
+				B: uint8(b),
 			})
 		}
 	}
 }
 
 func (p *NtscProcessor) compositeLayer(dst *image.Image, src *image.Image, yiq [][][]int32, field int, fieldno int) {
+	start := time.Now()
 	if p.Config.ColorBleedBefore && (p.Config.ColorBleedVert != 0 || p.Config.ColorBleedHoriz != 0) {
 		p.colorBleed(yiq, field)
+		fmt.Printf("DEBUG: colorBleed took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.CompositeInChromaLowpass {
 		p.compositeLowpass(yiq, field, fieldno)
+		fmt.Printf("DEBUG: compositeLowpass took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.Ringing != 1.0 {
 		p.ringing(yiq, field)
+		fmt.Printf("DEBUG: ringing took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	p.chromaIntoLuma(yiq, field, fieldno, p.Config.SubcarrierAmplitude)
+	fmt.Printf("DEBUG: chromaIntoLuma took %v\n", time.Since(start))
 
+	start = time.Now()
 	if p.Config.CompositePreemphasis != 0.0 && p.Config.CompositePreemphasisCut > 0 {
 		p.compositePreemphasis(yiq, field, p.Config.CompositePreemphasis, p.Config.CompositePreemphasisCut)
+		fmt.Printf("DEBUG: compositePreemphasis took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.VideoNoise != 0 {
 		p.videoNoise(yiq, field, p.Config.VideoNoise)
+		fmt.Printf("DEBUG: videoNoise took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.VHSHeadSwitching {
 		p.vhsHeadSwitching(yiq, field)
+		fmt.Printf("DEBUG: vhsHeadSwitching took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if !p.Config.NoColorSubcarrier {
 		p.chromaFromLuma(yiq, field, fieldno, p.Config.SubcarrierAmplitudeBack)
+		fmt.Printf("DEBUG: chromaFromLuma took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.VideoChromaNoise != 0 {
 		p.videoChromaNoise(yiq, field, p.Config.VideoChromaNoise)
+		fmt.Printf("DEBUG: videoChromaNoise took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.VideoChromaPhaseNoise != 0 {
 		p.videoChromaPhaseNoise(yiq, field, p.Config.VideoChromaPhaseNoise)
+		fmt.Printf("DEBUG: videoChromaPhaseNoise took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.EmulatingVHS {
 		p.emulateVHS(yiq, field, fieldno)
+		fmt.Printf("DEBUG: emulateVHS took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.VideoChromaLoss != 0 {
 		p.vhsChromaLoss(yiq, field, p.Config.VideoChromaLoss)
+		fmt.Printf("DEBUG: vhsChromaLoss took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if p.Config.CompositeOutChromaLowpass {
 		if p.Config.CompositeOutChromaLowpassLite {
 			p.compositeLowpassTV(yiq, field, fieldno)
 		} else {
 			p.compositeLowpass(yiq, field, fieldno)
 		}
+		fmt.Printf("DEBUG: compositeOutChromaLowpass took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	if !p.Config.ColorBleedBefore && (p.Config.ColorBleedVert != 0 || p.Config.ColorBleedHoriz != 0) {
 		p.colorBleed(yiq, field)
+		fmt.Printf("DEBUG: colorBleed (after) took %v\n", time.Since(start))
 	}
 
+	start = time.Now()
 	p.blurChroma(yiq, field)
+	fmt.Printf("DEBUG: blurChroma took %v\n", time.Since(start))
 
+	start = time.Now()
 	p.yiq2bgr(yiq, dst, field)
+	fmt.Printf("DEBUG: yiq2bgr took %v\n", time.Since(start))
 }
 
 func (p *NtscProcessor) chromaLumaXi(fieldno, y int) int {
@@ -992,7 +1026,9 @@ func (p *NtscProcessor) ringingFreqDomain(img []int32, alpha, noiseSize, noiseVa
 		complexData[i] = complex(samples[i], 0)
 	}
 
+	start := time.Now()
 	complexData = fft(complexData)
+	fmt.Printf("DEBUG: ringingFreqDomain FFT took %v\n", time.Since(start))
 
 	complexData = fftShift(complexData)
 
@@ -1029,7 +1065,9 @@ func (p *NtscProcessor) ringingFreqDomain(img []int32, alpha, noiseSize, noiseVa
 
 	complexData = ifftShift(complexData)
 
+	start = time.Now()
 	complexData = ifft(complexData)
+	fmt.Printf("DEBUG: ringingFreqDomain IFFT took %v\n", time.Since(start))
 
 	minVal := samples[0]
 	maxVal := samples[0]
@@ -1067,7 +1105,9 @@ func (p *NtscProcessor) ringing2(img []int32, power int, shift float64) {
 		complexData[i] = complex(samples[i], 0)
 	}
 
+	startFFT := time.Now()
 	complexData = fft(complexData)
+	fmt.Printf("DEBUG: ringing2 FFT took %v\n", time.Since(startFFT))
 
 	complexData = fftShift(complexData)
 
@@ -1084,10 +1124,10 @@ func (p *NtscProcessor) ringing2(img []int32, power int, shift float64) {
 	}
 
 	centerMask := make([]float64, width)
-	start := (scaleCols / 2) - (width / 2)
+	startLoop := (scaleCols / 2) - (width / 2)
 	for i := 0; i < width; i++ {
-		if start+i >= 0 && start+i < scaleCols {
-			centerMask[i] = mask[start+i]
+		if startLoop+i >= 0 && startLoop+i < scaleCols {
+			centerMask[i] = mask[startLoop+i]
 		}
 	}
 
@@ -1104,7 +1144,9 @@ func (p *NtscProcessor) ringing2(img []int32, power int, shift float64) {
 
 	complexData = ifftShift(complexData)
 
+	startIFFT := time.Now()
 	complexData = ifft(complexData)
+	fmt.Printf("DEBUG: ringing2 IFFT took %v\n", time.Since(startIFFT))
 
 	for i := 0; i < width; i++ {
 		img[i] = int32(real(complexData[i]))

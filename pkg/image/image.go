@@ -2,7 +2,7 @@ package image
 
 import (
 	"image"
-	"image/color"
+	"image/draw"
 	"math"
 )
 
@@ -13,11 +13,11 @@ type RGBAPixel struct {
 type Image struct {
 	Width  int
 	Height int
-	Data   [][]Pixel
+	Data   []uint8 // R, G, B, R, G, B, ...
 }
 
 type Pixel struct {
-	R, G, B float64
+	R, G, B uint8
 }
 
 type YIQPixel struct {
@@ -25,10 +25,7 @@ type YIQPixel struct {
 }
 
 func NewImage(width, height int) *Image {
-	data := make([][]Pixel, height)
-	for i := range data {
-		data[i] = make([]Pixel, width)
-	}
+	data := make([]uint8, width*height*3)
 	return &Image{
 		Width:  width,
 		Height: height,
@@ -40,27 +37,27 @@ func (img *Image) GetPixel(x, y int) Pixel {
 	if x < 0 || x >= img.Width || y < 0 || y >= img.Height {
 		return Pixel{0, 0, 0}
 	}
-	return img.Data[y][x]
+	idx := (y*img.Width + x) * 3
+	return Pixel{R: img.Data[idx], G: img.Data[idx+1], B: img.Data[idx+2]}
 }
 
 func (img *Image) SetPixel(x, y int, pixel Pixel) {
 	if x >= 0 && x < img.Width && y >= 0 && y < img.Height {
-		img.Data[y][x] = pixel
+		idx := (y*img.Width + x) * 3
+		img.Data[idx] = pixel.R
+		img.Data[idx+1] = pixel.G
+		img.Data[idx+2] = pixel.B
 	}
 }
 
 func (img *Image) Clone() *Image {
 	newImg := NewImage(img.Width, img.Height)
-	for y := 0; y < img.Height; y++ {
-		for x := 0; x < img.Width; x++ {
-			newImg.Data[y][x] = img.Data[y][x]
-		}
-	}
+	copy(newImg.Data, img.Data)
 	return newImg
 }
 
 func BGRToYIQ(pixel Pixel) YIQPixel {
-	r, g, b := pixel.R/255.0, pixel.G/255.0, pixel.B/255.0
+	r, g, b := float64(pixel.R)/255.0, float64(pixel.G)/255.0, float64(pixel.B)/255.0
 	y := 0.299*r + 0.587*g + 0.114*b
 	i := 0.5959*r - 0.2746*g - 0.3213*b
 	q := 0.2115*r - 0.5227*g + 0.3112*b
@@ -76,7 +73,7 @@ func YIQToBGR(yiq YIQPixel) Pixel {
 	g = math.Max(0, math.Min(1, g))
 	b = math.Max(0, math.Min(1, b))
 
-	return Pixel{R: r * 255.0, G: g * 255.0, B: b * 255.0}
+	return Pixel{R: uint8(r * 255.0), G: uint8(g * 255.0), B: uint8(b * 255.0)}
 }
 
 func (img *Image) ToYIQ() [][]YIQPixel {
@@ -84,7 +81,7 @@ func (img *Image) ToYIQ() [][]YIQPixel {
 	for y := 0; y < img.Height; y++ {
 		yiq[y] = make([]YIQPixel, img.Width)
 		for x := 0; x < img.Width; x++ {
-			yiq[y][x] = BGRToYIQ(img.Data[y][x])
+			yiq[y][x] = BGRToYIQ(img.GetPixel(x, y))
 		}
 	}
 	return yiq
@@ -96,7 +93,7 @@ func YIQToImage(yiq [][]YIQPixel) *Image {
 	img := NewImage(width, height)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			img.Data[y][x] = YIQToBGR(yiq[y][x])
+			img.SetPixel(x, y, YIQToBGR(yiq[y][x]))
 		}
 	}
 	return img
@@ -108,14 +105,23 @@ func FromGoImage(src image.Image) *Image {
 	height := bounds.Dy()
 	img := NewImage(width, height)
 
+	srcRGBA, ok := src.(*image.RGBA)
+	if !ok {
+		// Convert to RGBA if not already
+		srcRGBA = image.NewRGBA(bounds)
+		draw.Draw(srcRGBA, bounds, src, bounds.Min, draw.Src)
+	}
+
+	// Directly copy pixel data
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			r, g, b, _ := src.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
-			img.Data[y][x] = Pixel{
-				R: float64(r >> 8),
-				G: float64(g >> 8),
-				B: float64(b >> 8),
-			}
+			// RGBA stores as R, G, B, A
+			// Our Image stores as R, G, B
+			srcIdx := srcRGBA.PixOffset(x, y)
+			dstIdx := (y*width + x) * 3
+			img.Data[dstIdx] = srcRGBA.Pix[srcIdx]
+			img.Data[dstIdx+1] = srcRGBA.Pix[srcIdx+1]
+			img.Data[dstIdx+2] = srcRGBA.Pix[srcIdx+2]
 		}
 	}
 	return img
@@ -124,15 +130,15 @@ func FromGoImage(src image.Image) *Image {
 func (img *Image) ToGoImage() image.Image {
 	goImg := image.NewRGBA(image.Rect(0, 0, img.Width, img.Height))
 
+	// Directly copy pixel data
 	for y := 0; y < img.Height; y++ {
 		for x := 0; x < img.Width; x++ {
-			pixel := img.Data[y][x]
-			goImg.Set(x, y, color.RGBA{
-				R: uint8(math.Max(0, math.Min(255, pixel.R))),
-				G: uint8(math.Max(0, math.Min(255, pixel.G))),
-				B: uint8(math.Max(0, math.Min(255, pixel.B))),
-				A: 255,
-			})
+			srcIdx := (y*img.Width + x) * 3
+			dstIdx := goImg.PixOffset(x, y)
+			goImg.Pix[dstIdx] = img.Data[srcIdx]
+			goImg.Pix[dstIdx+1] = img.Data[srcIdx+1]
+			goImg.Pix[dstIdx+2] = img.Data[srcIdx+2]
+			goImg.Pix[dstIdx+3] = 255 // Alpha channel
 		}
 	}
 	return goImg
@@ -183,11 +189,11 @@ func (img *Image) Resize(maxWidth, maxHeight int) *Image {
 			p3 := img.GetPixel(x1, y2)
 			p4 := img.GetPixel(x2, y2)
 
-			r := p1.R*(1-dx)*(1-dy) + p2.R*dx*(1-dy) + p3.R*(1-dx)*dy + p4.R*dx*dy
-			g := p1.G*(1-dx)*(1-dy) + p2.G*dx*(1-dy) + p3.G*(1-dx)*dy + p4.G*dx*dy
-			b := p1.B*(1-dx)*(1-dy) + p2.B*dx*(1-dy) + p3.B*(1-dx)*dy + p4.B*dx*dy
+			r := float64(p1.R)*(1-dx)*(1-dy) + float64(p2.R)*dx*(1-dy) + float64(p3.R)*(1-dx)*dy + float64(p4.R)*dx*dy
+			g := float64(p1.G)*(1-dx)*(1-dy) + float64(p2.G)*dx*(1-dy) + float64(p3.G)*(1-dx)*dy + float64(p4.G)*dx*dy
+			b := float64(p1.B)*(1-dx)*(1-dy) + float64(p2.B)*dx*(1-dy) + float64(p3.B)*(1-dx)*dy + float64(p4.B)*dx*dy
 
-			resized.SetPixel(x, y, Pixel{R: r, G: g, B: b})
+			resized.SetPixel(x, y, Pixel{R: uint8(r), G: uint8(g), B: uint8(b)})
 		}
 	}
 

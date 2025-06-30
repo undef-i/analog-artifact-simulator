@@ -14,6 +14,7 @@ import (
 	"analog-artifact-simulator/pkg/ntsc"
 	"strings"
 	"syscall/js"
+	"time"
 )
 
 type ProcessRequest struct {
@@ -39,6 +40,8 @@ func main() {
 }
 
 func processNTSC(this js.Value, args []js.Value) interface{} {
+	startTotal := time.Now()
+
 	if len(args) != 1 {
 		return map[string]interface{}{
 			"error": "Invalid number of arguments",
@@ -57,6 +60,8 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 		req.Config = ntsc.DefaultNtscConfig()
 	}
 
+	// Decode image data
+	start := time.Now()
 	imageData, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(req.ImageData, "data:image/png;base64,"))
 	if err != nil {
 		imageData, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(req.ImageData, "data:image/jpeg;base64,"))
@@ -66,7 +71,10 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 			}
 		}
 	}
+	fmt.Printf("DEBUG: Base64 decode took %v\n", time.Since(start))
 
+	// Decode image
+	start = time.Now()
 	var img image.Image
 	if strings.Contains(req.ImageData, "data:image/png") {
 		img, err = png.Decode(bytes.NewReader(imageData))
@@ -78,28 +86,51 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 			"error": fmt.Sprintf("Failed to decode image: %v", err),
 		}
 	}
+	fmt.Printf("DEBUG: Image decode took %v\n", time.Since(start))
 
+	// Convert to ntscImage
+	start = time.Now()
 	ntscImg := ntscImage.FromGoImage(img)
+	fmt.Printf("DEBUG: FromGoImage took %v\n", time.Since(start))
 
 	maxWidth := req.MaxWidth
 	maxHeight := req.MaxHeight
 
+	// Resize image
 	if maxWidth > 0 || maxHeight > 0 {
+		start = time.Now()
 		ntscImg = ntscImg.Resize(maxWidth, maxHeight)
+		fmt.Printf("DEBUG: Resize took %v\n", time.Since(start))
 	}
 
 	processor := ntsc.NewNtscProcessor(req.Config)
-	processedImg := processor.ProcessImage(ntscImg)
-	resultImg := processedImg.ToGoImage()
 
+	// Process image
+	start = time.Now()
+	processedImg := processor.ProcessImage(ntscImg)
+	fmt.Printf("DEBUG: ProcessImage took %v\n", time.Since(start))
+
+	// Convert back to Go image
+	start = time.Now()
+	resultImg := processedImg.ToGoImage()
+	fmt.Printf("DEBUG: ToGoImage took %v\n", time.Since(start))
+
+	// Encode result image
+	start = time.Now()
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, resultImg); err != nil {
 		return map[string]interface{}{
 			"error": fmt.Sprintf("Failed to encode result image: %v", err),
 		}
 	}
+	fmt.Printf("DEBUG: Image encode took %v\n", time.Since(start))
 
+	// Encode to base64
+	start = time.Now()
 	resultData := base64.StdEncoding.EncodeToString(buf.Bytes())
+	fmt.Printf("DEBUG: Base64 encode took %v\n", time.Since(start))
+
+	fmt.Printf("DEBUG: Total processNTSC took %v\n", time.Since(startTotal))
 	return map[string]interface{}{
 		"imageData": "data:image/png;base64," + resultData,
 	}
@@ -150,3 +181,4 @@ func getPreset(this js.Value, args []js.Value) interface{} {
 		"config": string(configJSON),
 	}
 }
+

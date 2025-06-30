@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analog Video Artifact Simulator</title>
+    <title>Analog Artifact Simulator</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css"
         integrity="sha384-GvrOXuhMATgEsSwCs4smul74iXGOixntILdUW9XmUC6+HX0sLNAK3q71HotJqlAn" crossorigin="anonymous">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"
@@ -31,7 +31,7 @@
 <body>
     <h1>Analog Artifact Simulator</h1>
 
-    <p>A tool for simulating analog video artifacts including dot crawl, ringing, chroma noise, color bleeding, and VHS
+    <p>A tool for simulating analog artifacts including dot crawl, ringing, chroma noise, color bleeding, and VHS
         effects. Originally intended for analog artifact removal neural networks but also useful for artistic purposes.
     </p>
 
@@ -82,9 +82,9 @@
 
     <div id="imageDisplay" style="display: none;">
         <h3>Original</h3>
-        <img id="originalImage" style="width: 100%;">
+        <img id="originalImage" style="max-width: 400px;">
         <h3>Processed</h3>
-        <img id="processedImage" style="width: 100%;">
+        <img id="processedImage" style="max-width: 400px;">
         <div id="processTime"></div>
     </div>
     <div class="tech-overview">
@@ -230,23 +230,47 @@
                 television and VHS playback systems with exceptional fidelity and technical accuracy.</p>
     </div>
 
-    <script src="wasm_exec.js"></script>
     <script>
+        let wasmWorker = null;
         let wasmReady = false;
         let currentImageData = null;
 
-        async function loadWasm() {
-            const go = new Go();
-            const result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
-            go.run(result.instance);
-            wasmReady = true;
-            document.getElementById('wasmStatus').textContent = 'Ready to process images!';
+        // Initialize Web Worker
+        function initWorker() {
+            wasmWorker = new Worker('worker.js');
+
+            wasmWorker.onmessage = function (event) {
+                const data = event.data;
+                if (data.type === 'wasmLoaded') {
+                    wasmReady = true;
+                    document.getElementById('wasmStatus').textContent = 'Ready to process images!';
+                    document.getElementById('processBtn').disabled = false;
+                    if (currentImageData) { // If an image was already selected, process it
+                        processImage();
+                    }
+                } else if (data.type === 'result') {
+                    const processedImage = document.getElementById('processedImage');
+                    processedImage.src = data.imageData;
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('processBtn').disabled = false;
+                    document.getElementById('processTime').textContent = 'Processing time: ' + data.processTime + ' ms';
+                } else if (data.type === 'error') {
+                    showError(data.message);
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('processBtn').disabled = false;
+                }
+            };
+
+            wasmWorker.onerror = function (error) {
+                console.error('Worker error:', error);
+                showError('Web Worker encountered an error.');
+                document.getElementById('wasmStatus').textContent = 'Failed to load WebAssembly module';
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('processBtn').disabled = true;
+            };
         }
 
-        loadWasm().catch(err => {
-            console.error('Failed to load WASM:', err);
-            document.getElementById('wasmStatus').textContent = 'Failed to load WebAssembly module';
-        });
+        initWorker(); // Call to initialize the worker
 
         document.getElementById('fileInput').addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
@@ -292,41 +316,28 @@
                 return;
             }
 
-            try {
-                let config;
-                if (presetName === 'vanilla') {
-                    config = {
-                        CompositePreemphasis: 0.5,
-                        ColorBleedHoriz: 3,
-                        Ringing: 0.2,
-                        VideoNoise: 5,
-                        VideoChromaNoise: 2,
-                        VHSOutSharpen: 0.5,
-                        VHSChromaVertBlend: true,
-                        VHSSharpen: 0.2
-                    };
-                } else {
-                    const result = getPreset(presetName);
-                    if (result.error) {
-                        showError(result.error);
-                        return;
-                    }
-                    config = JSON.parse(result.config);
+            // Send message to worker to get preset config
+            wasmWorker.postMessage({ type: 'getPreset', presetName: presetName });
+
+            wasmWorker.onmessage = function (event) {
+                const data = event.data;
+                if (data.type === 'presetConfig') {
+                    const config = JSON.parse(data.config);
+                    document.getElementById('compositePreemphasis').value = config.CompositePreemphasis || 0;
+                    document.getElementById('colorBleed').value = (config.ColorBleedHoriz || 0) / 10;
+                    document.getElementById('ringing').value = config.Ringing || 0;
+                    document.getElementById('videoNoise').value = (config.VideoNoise || 0) / 100;
+                    document.getElementById('videoChromaNoise').value = (config.VideoChromaNoise || 0) / 100;
+                    document.getElementById('vhsLumaLowpass').value = config.VHSOutSharpen || 0;
+                    document.getElementById('vhsChromaLowpass').value = config.VHSChromaVertBlend ? 0.3 : 0;
+                    document.getElementById('vhsSharpen').value = config.VHSSharpen || 0;
+                    updateSliderValues();
+                } else if (data.type === 'error') {
+                    showError(data.message);
                 }
-
-                document.getElementById('compositePreemphasis').value = config.CompositePreemphasis || 0;
-                document.getElementById('colorBleed').value = (config.ColorBleedHoriz || 0) / 10;
-                document.getElementById('ringing').value = config.Ringing || 0;
-                document.getElementById('videoNoise').value = (config.VideoNoise || 0) / 100;
-                document.getElementById('videoChromaNoise').value = (config.VideoChromaNoise || 0) / 100;
-                document.getElementById('vhsLumaLowpass').value = config.VHSOutSharpen || 0;
-                document.getElementById('vhsChromaLowpass').value = config.VHSChromaVertBlend ? 0.3 : 0;
-                document.getElementById('vhsSharpen').value = config.VHSSharpen || 0;
-
-                updateSliderValues();
-            } catch (error) {
-                showError('Failed to load preset: ' + error.message);
-            }
+                // Re-attach the main onmessage handler after preset is loaded
+                initWorker();
+            };
         }
 
         function processImage() {
@@ -348,69 +359,55 @@
             processBtn.disabled = true;
             errorDiv.style.display = 'none';
             processTimeDiv.textContent = '';
-            const startTime = performance.now();
-            try {
-                const config = {
-                    CompositePreemphasis: parseFloat(document.getElementById('compositePreemphasis').value),
-                    CompositePreemphasisCut: 1000000.0,
-                    ColorBleedBefore: true,
-                    ColorBleedHoriz: Math.round(parseFloat(document.getElementById('colorBleed').value) * 10),
-                    ColorBleedVert: 0,
-                    Ringing: parseFloat(document.getElementById('ringing').value),
-                    EnableRinging2: false,
-                    RingingPower: 2,
-                    RingingShift: 0,
-                    FreqNoiseSize: 0,
-                    FreqNoiseAmplitude: 2,
-                    CompositeInChromaLowpass: true,
-                    CompositeOutChromaLowpass: true,
-                    CompositeOutChromaLowpassLite: true,
-                    VideoNoise: Math.round(parseFloat(document.getElementById('videoNoise').value) * 100),
-                    VideoChromaNoise: Math.round(parseFloat(document.getElementById('videoChromaNoise').value) * 100),
-                    VideoChromaPhaseNoise: Math.round(0.01 * 100),
-                    VideoChromaLoss: 0,
-                    SubcarrierAmplitude: 50,
-                    SubcarrierAmplitudeBack: 50,
-                    EmulatingVHS: false,
-                    NoColorSubcarrier: false,
-                    VHSChromaVertBlend: true,
-                    VHSSVideoOut: false,
-                    VHSOutSharpen: parseFloat(document.getElementById('vhsLumaLowpass').value),
-                    VHSEdgeWave: Math.round(0.1 * 100),
-                    VHSHeadSwitching: false,
-                    VHSHeadSwitchingPhaseNoise: 0.05,
-                    OutputNTSC: true,
-                    VideoScanlinePhaseShift: 180,
-                    VideoScanlinePhaseShiftOffset: 0,
-                    OutputVHSTapeSpeed: 0
-                };
 
-                const enableCompression = document.getElementById('enableCompression').checked;
-                const maxWidth = enableCompression ? parseInt(document.getElementById('maxWidth').value) || 0 : 0;
-                const maxHeight = enableCompression ? parseInt(document.getElementById('maxHeight').value) || 0 : 0;
+            const config = {
+                CompositePreemphasis: parseFloat(document.getElementById('compositePreemphasis').value),
+                CompositePreemphasisCut: 1000000.0,
+                ColorBleedBefore: true,
+                ColorBleedHoriz: Math.round(parseFloat(document.getElementById('colorBleed').value) * 10),
+                ColorBleedVert: 0,
+                Ringing: parseFloat(document.getElementById('ringing').value),
+                EnableRinging2: false,
+                RingingPower: 2,
+                RingingShift: 0,
+                FreqNoiseSize: 0,
+                FreqNoiseAmplitude: 2,
+                CompositeInChromaLowpass: true,
+                CompositeOutChromaLowpass: true,
+                CompositeOutChromaLowpassLite: true,
+                VideoNoise: Math.round(parseFloat(document.getElementById('videoNoise').value) * 100),
+                VideoChromaNoise: Math.round(parseFloat(document.getElementById('videoChromaNoise').value) * 100),
+                VideoChromaPhaseNoise: Math.round(0.01 * 100),
+                VideoChromaLoss: 0,
+                SubcarrierAmplitude: 50,
+                SubcarrierAmplitudeBack: 50,
+                EmulatingVHS: false,
+                NoColorSubcarrier: false,
+                VHSChromaVertBlend: true,
+                VHSSVideoOut: false,
+                VHSOutSharpen: parseFloat(document.getElementById('vhsLumaLowpass').value),
+                VHSEdgeWave: Math.round(0.1 * 100),
+                VHSHeadSwitching: false,
+                VHSHeadSwitchingPhaseNoise: 0.05,
+                OutputNTSC: true,
+                VideoScanlinePhaseShift: 180,
+                VideoScanlinePhaseShiftOffset: 0,
+                OutputVHSTapeSpeed: 0
+            };
 
-                const request = {
-                    imageData: currentImageData,
-                    config: config,
-                    maxWidth: maxWidth,
-                    maxHeight: maxHeight
-                };
+            const enableCompression = document.getElementById('enableCompression').checked;
+            const maxWidth = enableCompression ? parseInt(document.getElementById('maxWidth').value) || 0 : 0;
+            const maxHeight = enableCompression ? parseInt(document.getElementById('maxHeight').value) || 0 : 0;
 
-                const result = processNTSC(JSON.stringify(request));
+            const request = {
+                imageData: currentImageData,
+                config: config,
+                maxWidth: maxWidth,
+                maxHeight: maxHeight
+            };
 
-                if (result.error) {
-                    showError(result.error);
-                } else {
-                    document.getElementById('processedImage').src = result.imageData;
-                }
-                const endTime = performance.now();
-                processTimeDiv.textContent = 'Processing time: ' + (endTime - startTime).toFixed(1) + ' ms';
-            } catch (error) {
-                showError('Processing failed: ' + error.message);
-            } finally {
-                loading.style.display = 'none';
-                processBtn.disabled = false;
-            }
+            // Send message to worker to process image
+            wasmWorker.postMessage({ type: 'processImage', request: request });
         }
 
         function showError(message) {
