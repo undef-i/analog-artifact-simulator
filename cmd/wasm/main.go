@@ -118,7 +118,8 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 	// Encode result image
 	start = time.Now()
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, resultImg); err != nil {
+	encoder := png.Encoder{CompressionLevel: png.NoCompression}
+	if err := encoder.Encode(&buf, resultImg); err != nil {
 		return map[string]interface{}{
 			"error": fmt.Sprintf("Failed to encode result image: %v", err),
 		}

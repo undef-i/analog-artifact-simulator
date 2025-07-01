@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 	"analog-artifact-simulator/pkg/image"
 	"analog-artifact-simulator/pkg/random"
@@ -95,17 +96,27 @@ func (lp *LowpassFilter) Highpass(sample float64) float64 {
 
 func (lp *LowpassFilter) LowpassArray(samples []float64) []float64 {
 	result := make([]float64, len(samples))
+	prev := lp.prev // Use a local variable for prev
 	for i, sample := range samples {
-		result[i] = lp.Lowpass(sample)
+		stage1 := sample * lp.alpha
+		stage2 := prev - prev*lp.alpha
+		prev = stage1 + stage2
+		result[i] = prev
 	}
+	lp.prev = prev // Update lp.prev after the loop
 	return result
 }
 
 func (lp *LowpassFilter) HighpassArray(samples []float64) []float64 {
 	result := make([]float64, len(samples))
+	prev := lp.prev // Use a local variable for prev
 	for i, sample := range samples {
-		result[i] = lp.Highpass(sample)
+		stage1 := sample * lp.alpha
+		stage2 := prev - prev*lp.alpha
+		prev = stage1 + stage2
+		result[i] = sample - prev
 	}
+	lp.prev = prev // Update lp.prev after the loop
 	return result
 }
 
@@ -190,6 +201,12 @@ func DefaultNtscConfig() *NtscConfig {
 	}
 }
 
+type YIQImage struct {
+	Data   []int32 // Y, I, Q components flattened: YYY...III...QQQ...
+	Width  int
+	Height int
+}
+
 type NtscProcessor struct {
 	Config  *NtscConfig
 	Random  *random.XorWowRandom
@@ -213,51 +230,65 @@ func (p *NtscProcessor) ProcessImage(img *image.Image) *image.Image {
 	dst := img.Clone()
 	yiq := p.bgr2yiq(img)
 
-	for field := 0; field < 2; field++ {
-		p.compositeLayer(dst, img, yiq, field, 0)
-	}
+	var wg sync.WaitGroup
+	wg.Add(2) // Two fields to process
+
+	// Process field 0
+	go func() {
+		defer wg.Done()
+		p.compositeLayer(dst, img, yiq, 0, 0)
+	}()
+
+	// Process field 1
+	go func() {
+		defer wg.Done()
+		p.compositeLayer(dst, img, yiq, 1, 1)
+	}()
+
+	wg.Wait() // Wait for both fields to complete
 
 	return dst
 }
 
-func (p *NtscProcessor) bgr2yiq(img *image.Image) [][][]int32 {
+func (p *NtscProcessor) bgr2yiq(img *image.Image) *YIQImage {
 	height := img.Height
 	width := img.Width
-	yiq := make([][][]int32, 3)
-	for i := range yiq {
-		yiq[i] = make([][]int32, height)
-		for j := range yiq[i] {
-			yiq[i][j] = make([]int32, width)
-		}
-	}
+	
+	// Allocate a single flat slice for Y, I, Q components
+	yiqData := make([]int32, width*height*3)
+
+	imgData := img.Data // Direct access to underlying []uint8
 
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			pixel := img.GetPixel(x, y)
-			r := float64(pixel.R)
-			g := float64(pixel.G)
-			b := float64(pixel.B)
+			idx := (y*width + x) * 3
+			r := float64(imgData[idx])
+			g := float64(imgData[idx+1])
+			b := float64(imgData[idx+2])
 
 			dY := 0.30*r + 0.59*g + 0.11*b
 
-			yiq[0][y][x] = int32(dY * 256)
-			yiq[1][y][x] = int32(256 * (-0.27*(b-dY) + 0.74*(r-dY)))
-			yiq[2][y][x] = int32(256 * (0.41*(b-dY) + 0.48*(r-dY)))
+			// Store Y, I, Q sequentially
+			yiqData[y*width + x] = int32(dY * 256) // Y component
+			yiqData[height*width + y*width + x] = int32(256 * (-0.27*(b-dY) + 0.74*(r-dY))) // I component
+			yiqData[2*height*width + y*width + x] = int32(256 * (0.41*(b-dY) + 0.48*(r-dY))) // Q component
 		}
 	}
 
-	return yiq
+	return &YIQImage{Data: yiqData, Width: width, Height: height}
 }
 
-func (p *NtscProcessor) yiq2bgr(yiq [][][]int32, dst *image.Image, field int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) yiq2bgr(yiq *YIQImage, dst *image.Image, field int) {
+	height := yiq.Height
+	width := yiq.Width
+
+	dstData := dst.Data // Direct access to underlying []uint8
 
 	for y := field; y < height; y += 2 {
 		for x := 0; x < width; x++ {
-			Y := float64(yiq[0][y][x])
-			I := float64(yiq[1][y][x])
-			Q := float64(yiq[2][y][x])
+			Y := float64(yiq.Data[y*width + x])
+			I := float64(yiq.Data[height*width + y*width + x])
+			Q := float64(yiq.Data[2*height*width + y*width + x])
 
 			r := int32((1.000*Y + 0.956*I + 0.621*Q) / 256)
 			g := int32((1.000*Y + -0.272*I + -0.647*Q) / 256)
@@ -282,16 +313,15 @@ func (p *NtscProcessor) yiq2bgr(yiq [][][]int32, dst *image.Image, field int) {
 				b = 255
 			}
 
-			dst.SetPixel(x, y, image.Pixel{
-				R: uint8(r),
-				G: uint8(g),
-				B: uint8(b),
-			})
+			idx := (y*width + x) * 3
+			dstData[idx] = uint8(r)
+			dstData[idx+1] = uint8(g)
+			dstData[idx+2] = uint8(b)
 		}
 	}
 }
 
-func (p *NtscProcessor) compositeLayer(dst *image.Image, src *image.Image, yiq [][][]int32, field int, fieldno int) {
+func (p *NtscProcessor) compositeLayer(dst *image.Image, src *image.Image, yiq *YIQImage, field int, fieldno int) {
 	start := time.Now()
 	if p.Config.ColorBleedBefore && (p.Config.ColorBleedVert != 0 || p.Config.ColorBleedHoriz != 0) {
 		p.colorBleed(yiq, field)
@@ -399,9 +429,9 @@ func (p *NtscProcessor) chromaLumaXi(fieldno, y int) int {
 	}
 }
 
-func (p *NtscProcessor) chromaIntoLuma(yiq [][][]int32, field, fieldno, subcarrierAmplitude int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) chromaIntoLuma(yiq *YIQImage, field, fieldno, subcarrierAmplitude int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for y := field; y < height; y += 2 {
 		xi := p.chromaLumaXi(fieldno, y)
@@ -410,59 +440,67 @@ func (p *NtscProcessor) chromaIntoLuma(yiq [][][]int32, field, fieldno, subcarri
 			umultIdx := (xi + x) % 4
 			vmultIdx := (xi + x) % 4
 
-			chroma := yiq[1][y][x]*int32(subcarrierAmplitude)*p.Umult[umultIdx] +
-				yiq[2][y][x]*int32(subcarrierAmplitude)*p.Vmult[vmultIdx]
+			// Calculate flattened indices
+			idxY := y*width + x
+			idxI := height*width + y*width + x
+			idxQ := 2*height*width + y*width + x
 
-			yiq[0][y][x] += chroma / 50
-			yiq[1][y][x] = 0
-			yiq[2][y][x] = 0
+			chroma := yiq.Data[idxI]*int32(subcarrierAmplitude)*p.Umult[umultIdx] +
+				yiq.Data[idxQ]*int32(subcarrierAmplitude)*p.Vmult[vmultIdx]
+
+			yiq.Data[idxY] += chroma / 50
+			yiq.Data[idxI] = 0
+			yiq.Data[idxQ] = 0
 		}
 	}
 }
 
-func (p *NtscProcessor) chromaFromLuma(yiq [][][]int32, field, fieldno, subcarrierAmplitude int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) chromaFromLuma(yiq *YIQImage, field, fieldno, subcarrierAmplitude int) {
+	height := yiq.Height
+	width := yiq.Width
+
+	// Reuse temporary arrays to reduce allocations
+	chroma := make([]int32, width)
+	y2 := make([]int32, width)
+	yd4 := make([]int32, width)
+	sums := make([]int32, width)
+	sums0 := make([]int32, width+1)
+	acc := make([]int32, width)
+	acc4 := make([]int32, width)
+	cxi := make([]int32, width/2 + 1) // Max possible size
+	cxi1 := make([]int32, width/2 + 1) // Max possible size
 
 	for y := field; y < height; y += 2 {
-		Y := yiq[0][y]
-		I := yiq[1][y]
-		Q := yiq[2][y]
+		// Access Y, I, Q components from flattened array
+		Y_row_start := y*width
+		I_row_start := height*width + y*width
+		Q_row_start := 2*height*width + y*width
 
-		chroma := make([]int32, width)
-
-		sum := Y[0] + Y[1]
-
-		y2 := make([]int32, width)
-		yd4 := make([]int32, width)
+		sum := yiq.Data[Y_row_start] + yiq.Data[Y_row_start + 1]
 
 		for i := 0; i < width-2; i++ {
-			y2[i] = Y[i+2]
+			y2[i] = yiq.Data[Y_row_start + i + 2]
 		}
 
 		for i := 2; i < width; i++ {
-			yd4[i] = Y[i-2]
+			yd4[i] = yiq.Data[Y_row_start + i - 2]
 		}
 
-		sums := make([]int32, width)
 		for i := 0; i < width; i++ {
 			sums[i] = y2[i] - yd4[i]
 		}
 
-		sums0 := make([]int32, width+1)
 		sums0[0] = sum
 		for i := 0; i < width; i++ {
 			sums0[i+1] = sums[i]
 		}
 
-		acc := make([]int32, width)
 		accumulator := sums0[0]
 		for i := 0; i < width; i++ {
 			accumulator += sums0[i+1]
 			acc[i] = accumulator
 		}
 
-		acc4 := make([]int32, width)
 		for i := 0; i < width; i++ {
 			acc4[i] = acc[i] / 4
 		}
@@ -472,7 +510,7 @@ func (p *NtscProcessor) chromaFromLuma(yiq [][][]int32, field, fieldno, subcarri
 		}
 
 		for i := 0; i < width; i++ {
-			Y[i] = acc4[i]
+			yiq.Data[Y_row_start + i] = acc4[i]
 		}
 
 		xi := p.chromaLumaXi(fieldno, y)
@@ -490,52 +528,54 @@ func (p *NtscProcessor) chromaFromLuma(yiq [][][]int32, field, fieldno, subcarri
 			chroma[i] = chroma[i] * 50 / int32(subcarrierAmplitude)
 		}
 
-		cxi := make([]int32, 0)
+		cxiCount := 0
 		for i := xi; i < width; i += 2 {
-			cxi = append(cxi, -chroma[i])
+			cxi[cxiCount] = -chroma[i]
+			cxiCount++
 		}
 
-		cxi1 := make([]int32, 0)
+		cxi1Count := 0
 		for i := xi + 1; i < width; i += 2 {
-			cxi1 = append(cxi1, -chroma[i])
+			cxi1[cxi1Count] = -chroma[i]
+			cxi1Count++
 		}
 
 		for i := 0; i < width; i++ {
-			I[i] = 0
-			Q[i] = 0
+			yiq.Data[I_row_start + i] = 0
+			yiq.Data[Q_row_start + i] = 0
 		}
 
-		for i := 0; i < len(cxi) && i*2 < width; i++ {
-			I[i*2] = cxi[i]
+		for i := 0; i < cxiCount && i*2 < width; i++ {
+			yiq.Data[I_row_start + i*2] = cxi[i]
 		}
 
-		for i := 0; i < len(cxi1) && i*2 < width; i++ {
-			Q[i*2] = cxi1[i]
-		}
-
-		for x := 1; x < width-2; x += 2 {
-			I[x] = (I[x-1] + I[x+1]) >> 1
+		for i := 0; i < cxi1Count && i*2 < width; i++ {
+			yiq.Data[Q_row_start + i*2] = cxi1[i]
 		}
 
 		for x := 1; x < width-2; x += 2 {
-			Q[x] = (Q[x-1] + Q[x+1]) >> 1
+			yiq.Data[I_row_start + x] = (yiq.Data[I_row_start + x-1] + yiq.Data[I_row_start + x+1]) >> 1
+		}
+
+		for x := 1; x < width-2; x += 2 {
+			yiq.Data[Q_row_start + x] = (yiq.Data[Q_row_start + x-1] + yiq.Data[Q_row_start + x+1]) >> 1
 		}
 
 		for x := width - 2; x < width; x++ {
-			I[x] = 0
-			Q[x] = 0
+			yiq.Data[I_row_start + x] = 0
+			yiq.Data[Q_row_start + x] = 0
 		}
 	}
 }
 
-func (p *NtscProcessor) compositeLowpass(yiq [][][]int32, field, fieldno int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) compositeLowpass(yiq *YIQImage, field, fieldno int) {
+	height := yiq.Height
+	width := yiq.Width
 
-	for p := 1; p < 3; p++ {
+	for comp := 1; comp < 3; comp++ {
 		cutoff := 1300000.0
 		delay := 2
-		if p == 2 {
+		if comp == 2 {
 			cutoff = 600000.0
 			delay = 4
 		}
@@ -544,7 +584,7 @@ func (p *NtscProcessor) compositeLowpass(yiq [][][]int32, field, fieldno int) {
 		for y := field; y < height; y += 2 {
 			samples := make([]float64, width)
 			for x := 0; x < width; x++ {
-				samples[x] = float64(yiq[p][y][x])
+				samples[x] = float64(yiq.Data[comp*height*width + y*width + x])
 			}
 
 			f := lp[0].LowpassArray(samples)
@@ -552,24 +592,24 @@ func (p *NtscProcessor) compositeLowpass(yiq [][][]int32, field, fieldno int) {
 			f = lp[2].LowpassArray(f)
 
 			for x := 0; x < width-delay; x++ {
-				yiq[p][y][x] = int32(f[x+delay])
+				yiq.Data[comp*height*width + y*width + x] = int32(f[x+delay])
 			}
 		}
 	}
 }
 
-func (p *NtscProcessor) compositeLowpassTV(yiq [][][]int32, field, fieldno int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) compositeLowpassTV(yiq *YIQImage, field, fieldno int) {
+	height := yiq.Height
+	width := yiq.Width
 
-	for p := 1; p < 3; p++ {
+	for comp := 1; comp < 3; comp++ {
 		delay := 1
 		lp := LowpassFilters(2600000.0, 0.0, NTSC_RATE)
 
 		for y := field; y < height; y += 2 {
 			samples := make([]float64, width)
 			for x := 0; x < width; x++ {
-				samples[x] = float64(yiq[p][y][x])
+				samples[x] = float64(yiq.Data[comp*height*width + y*width + x])
 			}
 
 			f := lp[0].LowpassArray(samples)
@@ -577,35 +617,35 @@ func (p *NtscProcessor) compositeLowpassTV(yiq [][][]int32, field, fieldno int) 
 			f = lp[2].LowpassArray(f)
 
 			for x := 0; x < width-delay; x++ {
-				yiq[p][y][x] = int32(f[x+delay])
+				yiq.Data[comp*height*width + y*width + x] = int32(f[x+delay])
 			}
 		}
 	}
 }
 
-func (p *NtscProcessor) compositePreemphasis(yiq [][][]int32, field int, compositePreemphasis, compositePreemphasisCut float64) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) compositePreemphasis(yiq *YIQImage, field int, compositePreemphasis, compositePreemphasisCut float64) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for y := field; y < height; y += 2 {
 		pre := NewLowpassFilter(NTSC_RATE, compositePreemphasisCut, 16.0)
 
 		samples := make([]float64, width)
 		for x := 0; x < width; x++ {
-			samples[x] = float64(yiq[0][y][x])
+			samples[x] = float64(yiq.Data[y*width + x])
 		}
 
 		highpass := pre.HighpassArray(samples)
 		for x := 0; x < width; x++ {
 			filtered := samples[x] + highpass[x]*compositePreemphasis
-			yiq[0][y][x] = int32(filtered)
+			yiq.Data[y*width + x] = int32(filtered)
 		}
 	}
 }
 
-func (p *NtscProcessor) videoNoise(yiq [][][]int32, field, videoNoise int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) videoNoise(yiq *YIQImage, field, videoNoise int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	noiseMod := videoNoise*2 + 1
 	fieldHeight := (height + 1) / 2
@@ -629,7 +669,7 @@ func (p *NtscProcessor) videoNoise(yiq [][][]int32, field, videoNoise int) {
 		idx := 0
 		for y := field; y < height; y += 2 {
 			for x := 0; x < width; x++ {
-				yiq[0][y][x] += shiftedNoises[idx]
+				yiq.Data[y*width + x] += shiftedNoises[idx]
 				idx++
 			}
 		}
@@ -641,7 +681,7 @@ func (p *NtscProcessor) videoNoise(yiq [][][]int32, field, videoNoise int) {
 			}
 			noise := int32(0)
 			for x := 0; x < width; x++ {
-				yiq[0][y][x] += noise
+				yiq.Data[y*width + x] += noise
 				noise += rnds[x]
 				noise = noise / 2
 			}
@@ -649,43 +689,20 @@ func (p *NtscProcessor) videoNoise(yiq [][][]int32, field, videoNoise int) {
 	}
 }
 
-func (p *NtscProcessor) videoChromaNoise(yiq [][][]int32, field, videoChromaNoise int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) videoChromaNoise(yiq *YIQImage, field, videoChromaNoise int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	noiseMod := videoChromaNoise*2 + 1
-	fieldHeight := (height + 1) / 2
 
 	if !p.Precise {
-		lp := NewLowpassFilter(1, 1, 0)
-		lp.alpha = 0.5
-
-		rndsU := make([]float64, width*fieldHeight)
-		rndsV := make([]float64, width*fieldHeight)
-		for i := 0; i < len(rndsU); i++ {
-			rndsU[i] = float64(p.Random.NextInt()%int32(noiseMod) - int32(videoChromaNoise))
-			rndsV[i] = float64(p.Random.NextInt()%int32(noiseMod) - int32(videoChromaNoise))
-		}
-
-		noisesU := lp.LowpassArray(rndsU)
-		noisesV := lp.LowpassArray(rndsV)
-		noisesUInt := make([]int32, len(noisesU))
-		noisesVInt := make([]int32, len(noisesV))
-		for i, v := range noisesU {
-			noisesUInt[i] = int32(v)
-		}
-		for i, v := range noisesV {
-			noisesVInt[i] = int32(v)
-		}
-		shiftedNoisesU := shiftArray(noisesUInt, 1)
-		shiftedNoisesV := shiftArray(noisesVInt, 1)
-
-		idx := 0
+		// Simplified noise generation and application for potential vectorization
 		for y := field; y < height; y += 2 {
 			for x := 0; x < width; x++ {
-				yiq[1][y][x] += shiftedNoisesU[idx]
-				yiq[2][y][x] += shiftedNoisesV[idx]
-				idx++
+				rndU := p.Random.NextInt()%int32(noiseMod) - int32(videoChromaNoise)
+				rndV := p.Random.NextInt()%int32(noiseMod) - int32(videoChromaNoise)
+				yiq.Data[height*width + y*width + x] += rndU // I component
+				yiq.Data[2*height*width + y*width + x] += rndV // Q component
 			}
 		}
 	} else {
@@ -693,11 +710,11 @@ func (p *NtscProcessor) videoChromaNoise(yiq [][][]int32, field, videoChromaNois
 		noiseV := int32(0)
 		for y := field; y < height; y += 2 {
 			for x := 0; x < width; x++ {
-				yiq[1][y][x] += noiseU
+				yiq.Data[height*width + y*width + x] += noiseU
 				noiseU += p.Random.NextInt()%int32(noiseMod) - int32(videoChromaNoise)
 				noiseU = noiseU / 2
 
-				yiq[2][y][x] += noiseV
+				yiq.Data[2*height*width + y*width + x] += noiseV
 				noiseV += p.Random.NextInt()%int32(noiseMod) - int32(videoChromaNoise)
 				noiseV = noiseV / 2
 			}
@@ -705,9 +722,9 @@ func (p *NtscProcessor) videoChromaNoise(yiq [][][]int32, field, videoChromaNois
 	}
 }
 
-func (p *NtscProcessor) videoChromaPhaseNoise(yiq [][][]int32, field, videoChromaPhaseNoise int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) videoChromaPhaseNoise(yiq *YIQImage, field, videoChromaPhaseNoise int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	noiseMod := videoChromaPhaseNoise*2 + 1
 	noise := int32(0)
@@ -720,21 +737,24 @@ func (p *NtscProcessor) videoChromaPhaseNoise(yiq [][][]int32, field, videoChrom
 		cospi := math.Cos(pi)
 
 		for x := 0; x < width; x++ {
-			u := float64(yiq[1][y][x])
-			v := float64(yiq[2][y][x])
+			idxI := height*width + y*width + x
+			idxQ := 2*height*width + y*width + x
+
+			u := float64(yiq.Data[idxI])
+			v := float64(yiq.Data[idxQ])
 
 			newU := u*cospi - v*sinpi
 			newV := u*sinpi + v*cospi
 
-			yiq[1][y][x] = int32(newU)
-			yiq[2][y][x] = int32(newV)
+			yiq.Data[idxI] = int32(newU)
+			yiq.Data[idxQ] = int32(newV)
 		}
 	}
 }
 
-func (p *NtscProcessor) vhsHeadSwitching(yiq [][][]int32, field int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) vhsHeadSwitching(yiq *YIQImage, field int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	twidth := width + width/10
 	shy := 0
@@ -774,20 +794,17 @@ func (p *NtscProcessor) vhsHeadSwitching(yiq [][][]int32, field int) {
 		if y >= 0 {
 			if shif != 0 {
 				tmp := make([]int32, twidth)
+				// Copy data for the current row (Y component)
+				copy(tmp, yiq.Data[y*width : (y+1)*width])
+
 				x2 := (tx + twidth + shif) % twidth
 
 				for i := 0; i < width; i++ {
-					tmp[i] = yiq[0][y][i]
-				}
-
-				x := tx
-				for x < width {
-					yiq[0][y][x] = tmp[x2]
+					yiq.Data[y*width + i] = tmp[x2]
 					x2++
 					if x2 == twidth {
 						x2 = 0
 					}
-					x++
 				}
 			}
 		}
@@ -803,7 +820,7 @@ func (p *NtscProcessor) vhsHeadSwitching(yiq [][][]int32, field int) {
 	}
 }
 
-func (p *NtscProcessor) emulateVHS(yiq [][][]int32, field, fieldno int) {
+func (p *NtscProcessor) emulateVHS(yiq *YIQImage, field, fieldno int) {
 	vhsSpeed := p.Config.OutputVHSTapeSpeed
 
 	if p.Config.VHSEdgeWave != 0 {
@@ -825,9 +842,9 @@ func (p *NtscProcessor) emulateVHS(yiq [][][]int32, field, fieldno int) {
 	}
 }
 
-func (p *NtscProcessor) vhsLumaLowpass(yiq [][][]int32, field int, lumaCut float64) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) vhsLumaLowpass(yiq *YIQImage, field int, lumaCut float64) {
+	height := yiq.Height
+	width := yiq.Width
 
 	lp := LowpassFilters(lumaCut, 16.0, NTSC_RATE)
 	pre := NewLowpassFilter(NTSC_RATE, lumaCut, 16.0)
@@ -835,7 +852,7 @@ func (p *NtscProcessor) vhsLumaLowpass(yiq [][][]int32, field int, lumaCut float
 	for y := field; y < height; y += 2 {
 		samples := make([]float64, width)
 		for x := 0; x < width; x++ {
-			samples[x] = float64(yiq[0][y][x])
+			samples[x] = float64(yiq.Data[y*width + x])
 		}
 
 		f0 := lp[0].LowpassArray(samples)
@@ -845,21 +862,21 @@ func (p *NtscProcessor) vhsLumaLowpass(yiq [][][]int32, field int, lumaCut float
 
 		for x := 0; x < width; x++ {
 			f3 := f2[x] + highpass[x]*1.6
-			yiq[0][y][x] = int32(f3)
+			yiq.Data[y*width + x] = int32(f3)
 		}
 	}
 }
 
-func (p *NtscProcessor) vhsChromaLowpass(yiq [][][]int32, field int, chromaCut float64, chromaDelay int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) vhsChromaLowpass(yiq *YIQImage, field int, chromaCut float64, chromaDelay int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for comp := 1; comp < 3; comp++ {
 		lp := LowpassFilters(chromaCut, 0.0, NTSC_RATE)
 		for y := field; y < height; y += 2 {
 			samples := make([]float64, width)
 			for x := 0; x < width; x++ {
-				samples[x] = float64(yiq[comp][y][x])
+				samples[x] = float64(yiq.Data[comp*height*width + y*width + x])
 			}
 
 			f0 := lp[0].LowpassArray(samples)
@@ -867,30 +884,30 @@ func (p *NtscProcessor) vhsChromaLowpass(yiq [][][]int32, field int, chromaCut f
 			f2 := lp[2].LowpassArray(f1)
 
 			for x := 0; x < width-chromaDelay; x++ {
-				yiq[comp][y][x] = int32(f2[x+chromaDelay])
+				yiq.Data[comp*height*width + y*width + x] = int32(f2[x+chromaDelay])
 			}
 		}
 	}
 }
 
-func (p *NtscProcessor) vhsChromaVertBlend(yiq [][][]int32, field int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) vhsChromaVertBlend(yiq *YIQImage, field int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for comp := 1; comp < 3; comp++ {
 		for y := field + 2; y < height; y += 2 {
 			for x := 0; x < width; x++ {
-				delay := yiq[comp][y-2][x]
-				current := yiq[comp][y][x]
-				yiq[comp][y][x] = (delay + current + 1) >> 1
+				delay := yiq.Data[comp*height*width + (y-2)*width + x]
+				current := yiq.Data[comp*height*width + y*width + x]
+				yiq.Data[comp*height*width + y*width + x] = (delay + current + 1) >> 1
 			}
 		}
 	}
 }
 
-func (p *NtscProcessor) vhsSharpen(yiq [][][]int32, field int, lumaCut float64) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) vhsSharpen(yiq *YIQImage, field int, lumaCut float64) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for y := field; y < height; y += 2 {
 		lp1 := NewLowpassFilter(NTSC_RATE, lumaCut*4, 0.0)
@@ -899,7 +916,7 @@ func (p *NtscProcessor) vhsSharpen(yiq [][][]int32, field int, lumaCut float64) 
 
 		samples := make([]float64, width)
 		for x := 0; x < width; x++ {
-			samples[x] = float64(yiq[0][y][x])
+			samples[x] = float64(yiq.Data[y*width + x])
 		}
 
 		ts := lp1.LowpassArray(samples)
@@ -908,14 +925,14 @@ func (p *NtscProcessor) vhsSharpen(yiq [][][]int32, field int, lumaCut float64) 
 
 		for x := 0; x < width; x++ {
 			sharpened := samples[x] + (samples[x]-ts[x])*p.Config.VHSOutSharpen*2.0
-			yiq[0][y][x] = int32(sharpened)
+			yiq.Data[y*width + x] = int32(sharpened)
 		}
 	}
 }
 
-func (p *NtscProcessor) colorBleed(yiq [][][]int32, field int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) colorBleed(yiq *YIQImage, field int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for comp := 1; comp < 3; comp++ {
 		for y := field; y < height; y += 2 {
@@ -924,16 +941,19 @@ func (p *NtscProcessor) colorBleed(yiq [][][]int32, field int) {
 				srcX := x - p.Config.ColorBleedHoriz
 
 				if srcY >= 0 && srcY < height && srcX >= 0 && srcX < width {
-					yiq[comp][y][x] = yiq[comp][srcY][srcX]
+					// Calculate flattened index
+					idxDst := comp*height*width + y*width + x
+					idxSrc := comp*height*width + srcY*width + srcX
+					yiq.Data[idxDst] = yiq.Data[idxSrc]
 				}
 			}
 		}
 	}
 }
 
-func (p *NtscProcessor) vhsEdgeWave(yiq [][][]int32, field int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) vhsEdgeWave(yiq *YIQImage, field int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	rnds := make([]int32, height/2)
 	for i := range rnds {
@@ -958,9 +978,9 @@ func (p *NtscProcessor) vhsEdgeWave(yiq [][][]int32, field int) {
 				for x := 0; x < width; x++ {
 					srcX := x - shift
 					if srcX >= 0 && srcX < width {
-						yiq[comp][y][x] = yiq[comp][y][srcX]
+						yiq.Data[comp*height*width + y*width + x] = yiq.Data[comp*height*width + y*width + srcX]
 					} else {
-						yiq[comp][y][x] = 0
+						yiq.Data[comp*height*width + y*width + x] = 0
 					}
 				}
 			}
@@ -968,22 +988,23 @@ func (p *NtscProcessor) vhsEdgeWave(yiq [][][]int32, field int) {
 	}
 }
 
-func (p *NtscProcessor) vhsChromaLoss(yiq [][][]int32, field, videoChromaLoss int) {
-	height := len(yiq[0])
+func (p *NtscProcessor) vhsChromaLoss(yiq *YIQImage, field, videoChromaLoss int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for y := field; y < height; y += 2 {
 		if p.Random.NextInt()%100000 < int32(videoChromaLoss) {
-			for x := 0; x < len(yiq[1][y]); x++ {
-				yiq[1][y][x] = 0
-				yiq[2][y][x] = 0
+			for x := 0; x < width; x++ {
+				yiq.Data[height*width + y*width + x] = 0 // I component
+				yiq.Data[2*height*width + y*width + x] = 0 // Q component
 			}
 		}
 	}
 }
 
-func (p *NtscProcessor) ringing(yiq [][][]int32, field int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) ringing(yiq *YIQImage, field int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	if !p.Config.EnableRinging2 {
 
@@ -991,12 +1012,13 @@ func (p *NtscProcessor) ringing(yiq [][][]int32, field int) {
 			for y := field; y < height; y += 2 {
 
 				original := make([]int32, width)
-				copy(original, yiq[comp][y])
+				// Copy data for the current component and row
+				copy(original, yiq.Data[comp*height*width + y*width : comp*height*width + (y+1)*width])
 
 				for x := 1; x < width-1; x++ {
 					diff := original[x+1] - original[x-1]
 					ringingEffect := int32(float64(diff) * (p.Config.Ringing - 1.0) * 0.1)
-					yiq[comp][y][x] += ringingEffect
+					yiq.Data[comp*height*width + y*width + x] += ringingEffect
 				}
 			}
 		}
@@ -1004,7 +1026,9 @@ func (p *NtscProcessor) ringing(yiq [][][]int32, field int) {
 
 		for comp := 0; comp < 3; comp++ {
 			for y := field; y < height; y += 2 {
-				p.ringing2(yiq[comp][y], p.Config.RingingPower, float64(p.Config.RingingShift))
+				// Create a slice for the current component and row
+				row := yiq.Data[comp*height*width + y*width : comp*height*width + (y+1)*width]
+				p.ringing2(row, p.Config.RingingPower, float64(p.Config.RingingShift))
 			}
 		}
 	}
@@ -1153,19 +1177,19 @@ func (p *NtscProcessor) ringing2(img []int32, power int, shift float64) {
 	}
 }
 
-func (p *NtscProcessor) blurChroma(yiq [][][]int32, field int) {
-	height := len(yiq[0])
-	width := len(yiq[0][0])
+func (p *NtscProcessor) blurChroma(yiq *YIQImage, field int) {
+	height := yiq.Height
+	width := yiq.Width
 
 	for comp := 1; comp < 3; comp++ {
 		for y := field; y < height; y += 2 {
 			original := make([]int32, width)
-			copy(original, yiq[comp][y])
+			copy(original, yiq.Data[comp*height*width + y*width : comp*height*width + (y+1)*width])
 
 			for x := 1; x < width-1; x++ {
 
 				avg := (original[x-1] + original[x]*2 + original[x+1]) / 4
-				yiq[comp][y][x] = avg
+				yiq.Data[comp*height*width + y*width + x] = avg
 			}
 		}
 	}

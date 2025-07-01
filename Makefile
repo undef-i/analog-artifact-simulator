@@ -31,14 +31,15 @@ $(WASM_OUTPUT): $(shell find $(PKG_DIR) -name "*.go") $(CMD_DIR)/main.go
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GO_BUILD_FLAGS) -o $(WASM_OUTPUT) $(CMD_DIR)/main.go
 
 # Copy wasm_exec.js from Go installation
-$(WASM_EXEC_JS): $(WASM_OUTPUT)
+$(WASM_EXEC_JS):
 	@echo "Copying wasm_exec.js..."
-	@if [ -n "$$GOROOT" ]; then \
-		cp "$$GOROOT/misc/wasm/wasm_exec.js" $(WASM_EXEC_JS); \
+	@if [ -n "$(GOROOT)" ]; then \
+		cp "$(GOROOT)/misc/wasm/wasm_exec.js" $(WASM_EXEC_JS); \
 	else \
 		echo "Warning: GOROOT not set, trying to find Go installation..."; \
 		go env GOROOT | xargs -I {} cp "{}/misc/wasm/wasm_exec.js" $(WASM_EXEC_JS); \
 	fi
+
 
 # Clean build artifacts
 .PHONY: clean
