@@ -1,5 +1,5 @@
 // web/worker.js
-importScripts('./wasm_exec.js');
+importScripts('wasm_exec.js');
 
 const go = new Go();
 let wasm;
@@ -19,9 +19,15 @@ async function loadWasm() {
 loadWasm();
 
 onmessage = function(e) {
-    const { type, request, presetName } = e.data;
+    const { type, request, presetName, enabled } = e.data;
 
-    if (type === 'processImage') {
+    if (type === 'setDebugMode') {
+        try {
+            setDebugMode(enabled);
+        } catch (error) {
+            console.error('Failed to set debug mode:', error);
+        }
+    } else if (type === 'processImage') {
         try {
             const startTime = performance.now();
             const result = processNTSC(JSON.stringify(request));

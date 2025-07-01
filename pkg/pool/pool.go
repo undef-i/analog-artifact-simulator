@@ -1,8 +1,8 @@
 package pool
 
 import (
+	"ntsc-wasm/pkg/image"
 	"sync"
-	"analog-artifact-simulator/pkg/image"
 )
 
 type ImagePool struct {

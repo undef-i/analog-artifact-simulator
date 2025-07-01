@@ -1,3 +1,3 @@
-module analog-artifact-simulator
+module ntsc-wasm
 
 go 1.21

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analog Artifact Simulator</title>
+    <title>ntsc-wasm</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css"
         integrity="sha384-GvrOXuhMATgEsSwCs4smul74iXGOixntILdUW9XmUC6+HX0sLNAK3q71HotJqlAn" crossorigin="anonymous">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"
@@ -28,14 +28,12 @@
 
         .image-container {
             display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
+            gap: clamp(10px, 4vw, 20px);
             justify-content: center;
         }
 
         .image-section {
             flex: 1;
-            min-width: 300px;
             text-align: center;
         }
 
@@ -47,10 +45,9 @@
 </head>
 
 <body>
-    <h1>Analog Artifact Simulator</h1>
+    <h1>ntsc-wasm</h1>
 
-    <p>A tool for simulating analog artifacts including dot crawl, ringing, chroma noise, color bleeding, and VHS
-        effects. Originally intended for analog artifact removal neural networks but also useful for artistic purposes.
+    <p>A comprehensive analog video artifact simulator that accurately reproduces classic video imperfections including dot crawl patterns, signal ringing, chroma noise distortion, color bleeding effects, and authentic VHS-style degradation.
     </p>
 
     <p><em>This implementation is inspired by the <a href="https://ntsc.rs" target="_blank">ntsc-rs</a> project.</em>
@@ -69,22 +66,212 @@
     <button onclick="loadPreset('broadcast')">Broadcast</button>
     <button onclick="loadPreset('vanilla')">Vanilla</button>
     <h3>Controls</h3>
-    <div>Composite Preemphasis: <input type="range" id="compositePreemphasis" min="0" max="1" step="0.01" value="0.0">
-        <span id="compositePreemphasisValue">0.0</span></div>
-    <div>Color Bleed: <input type="range" id="colorBleed" min="0" max="1" step="0.01" value="0.0"> <span
-            id="colorBleedValue">0.0</span></div>
-    <div>Ringing: <input type="range" id="ringing" min="0" max="1" step="0.01" value="1.0"> <span
-            id="ringingValue">1.0</span></div>
-    <div>Video Noise: <input type="range" id="videoNoise" min="0" max="1" step="0.01" value="0.02"> <span
-            id="videoNoiseValue">0.02</span></div>
-    <div>Chroma Noise: <input type="range" id="videoChromaNoise" min="0" max="1" step="0.01" value="0.0"> <span
-            id="videoChromaNoiseValue">0.0</span></div>
-    <div>VHS Luma: <input type="range" id="vhsLumaLowpass" min="0" max="1" step="0.01" value="0.5"> <span
-            id="vhsLumaLowpassValue">0.5</span></div>
-    <div>VHS Chroma: <input type="range" id="vhsChromaLowpass" min="0" max="1" step="0.01" value="0.3"> <span
-            id="vhsChromaLowpassValue">0.3</span></div>
-    <div>VHS Sharpen: <input type="range" id="vhsSharpen" min="0" max="1" step="0.01" value="0.2"> <span
-            id="vhsSharpenValue">0.2</span></div>
+    
+    <!-- Composite Signal Controls -->
+    <details open>
+        <summary><strong>Composite Signal</strong></summary>
+        <div class="control-group">
+            <div class="control-item">
+                <label>Composite Preemphasis:</label>
+                <input type="range" id="compositePreemphasis" min="0" max="8" step="0.1" value="0.0">
+                <span id="compositePreemphasisValue">0.0</span>
+            </div>
+            <div class="control-item">
+                <label>Preemphasis Cut Frequency:</label>
+                <input type="range" id="compositePreemphasisCut" min="100000" max="2000000" step="10000" value="1000000">
+                <span id="compositePreemphasisCutValue">1000000</span>
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="compositeInChromaLowpass" checked> Composite In Chroma Lowpass
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="compositeOutChromaLowpass" checked> Composite Out Chroma Lowpass
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="compositeOutChromaLowpassLite" checked> Composite Out Chroma Lowpass Lite
+            </div>
+        </div>
+    </details>
+
+    <!-- Color and Bleeding Controls -->
+    <details open>
+        <summary><strong>Color & Bleeding</strong></summary>
+        <div class="control-group">
+            <div class="control-item">
+                <input type="checkbox" id="colorBleedBefore" checked> Color Bleed Before
+            </div>
+            <div class="control-item">
+                <label>Color Bleed Horizontal:</label>
+                <input type="range" id="colorBleedHoriz" min="0" max="20" step="1" value="0">
+                <span id="colorBleedHorizValue">0</span>
+            </div>
+            <div class="control-item">
+                <label>Color Bleed Vertical:</label>
+                <input type="range" id="colorBleedVert" min="0" max="20" step="1" value="0">
+                <span id="colorBleedVertValue">0</span>
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="noColorSubcarrier"> No Color Subcarrier
+            </div>
+            <div class="control-item">
+                <label>Subcarrier Amplitude:</label>
+                <input type="range" id="subcarrierAmplitude" min="0" max="100" step="1" value="50">
+                <span id="subcarrierAmplitudeValue">50</span>
+            </div>
+        </div>
+    </details>
+
+    <!-- Ringing and Frequency Controls -->
+    <details open>
+        <summary><strong>Ringing & Frequency</strong></summary>
+        <div class="control-group">
+            <div class="control-item">
+                <label>Ringing:</label>
+                <input type="range" id="ringing" min="0" max="3" step="0.1" value="1.0">
+                <span id="ringingValue">1.0</span>
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="enableRinging2"> Enable Ringing 2
+            </div>
+            <div class="control-item">
+                <label>Ringing Power:</label>
+                <input type="range" id="ringingPower" min="1" max="5" step="1" value="2">
+                <span id="ringingPowerValue">2</span>
+            </div>
+            <div class="control-item">
+                <label>Ringing Shift:</label>
+                <input type="range" id="ringingShift" min="-10" max="10" step="1" value="0">
+                <span id="ringingShiftValue">0</span>
+            </div>
+            <div class="control-item">
+                <label>Frequency Noise Size:</label>
+                <input type="range" id="freqNoiseSize" min="0" max="10" step="0.1" value="0">
+                <span id="freqNoiseSizeValue">0</span>
+            </div>
+            <div class="control-item">
+                <label>Frequency Noise Amplitude:</label>
+                <input type="range" id="freqNoiseAmplitude" min="0" max="10" step="0.1" value="2">
+                <span id="freqNoiseAmplitudeValue">2</span>
+            </div>
+        </div>
+    </details>
+
+    <!-- Noise Controls -->
+    <details open>
+        <summary><strong>Noise</strong></summary>
+        <div class="control-group">
+            <div class="control-item">
+                <label>Video Noise:</label>
+                <input type="range" id="videoNoise" min="0" max="100" step="1" value="2">
+                <span id="videoNoiseValue">2</span>
+            </div>
+            <div class="control-item">
+                <label>Chroma Noise:</label>
+                <input type="range" id="videoChromaNoise" min="0" max="500" step="1" value="0">
+                <span id="videoChromaNoiseValue">0</span>
+            </div>
+            <div class="control-item">
+                <label>Chroma Phase Noise:</label>
+                <input type="range" id="videoChromaPhaseNoise" min="0" max="100" step="1" value="0">
+                <span id="videoChromaPhaseNoiseValue">0</span>
+            </div>
+            <div class="control-item">
+                <label>Chroma Loss:</label>
+                <input type="range" id="videoChromaLoss" min="0" max="100000" step="100" value="0">
+                <span id="videoChromaLossValue">0</span>
+            </div>
+        </div>
+    </details>
+
+    <!-- VHS Controls -->
+    <details>
+        <summary><strong>VHS Effects</strong></summary>
+        <div class="control-group">
+            <div class="control-item">
+                <input type="checkbox" id="emulatingVHS"> Emulating VHS
+            </div>
+            <div class="control-item">
+                <label>VHS Out Sharpen:</label>
+                <input type="range" id="vhsOutSharpen" min="0" max="5" step="0.1" value="1.5">
+                <span id="vhsOutSharpenValue">1.5</span>
+            </div>
+            <div class="control-item">
+                <label>VHS Edge Wave:</label>
+                <input type="range" id="vhsEdgeWave" min="0" max="10" step="1" value="0">
+                <span id="vhsEdgeWaveValue">0</span>
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="vhsHeadSwitching"> VHS Head Switching
+            </div>
+            <div class="control-item">
+                <label>Head Switching Speed:</label>
+                <input type="range" id="headSwitchingSpeed" min="0" max="10" step="1" value="0">
+                <span id="headSwitchingSpeedValue">0</span>
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="vhsChromaVertBlend" checked> VHS Chroma Vertical Blend
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="vhsSVideoOut"> VHS S-Video Out
+            </div>
+            <div class="control-item">
+                <label>VHS Tape Speed:</label>
+                <select id="outputVHSTapeSpeed">
+                    <option value="0">SP (Standard Play)</option>
+                    <option value="1">LP (Long Play)</option>
+                    <option value="2">EP (Extended Play)</option>
+                </select>
+            </div>
+        </div>
+    </details>
+
+    <!-- Scanline Controls -->
+    <details>
+        <summary><strong>Scanline & Phase</strong></summary>
+        <div class="control-group">
+            <div class="control-item">
+                <label>Scanline Phase Shift:</label>
+                <select id="videoScanlinePhaseShift">
+                    <option value="0">0°</option>
+                    <option value="90">90°</option>
+                    <option value="180" selected>180°</option>
+                    <option value="270">270°</option>
+                </select>
+            </div>
+            <div class="control-item">
+                <label>Phase Shift Offset:</label>
+                <input type="range" id="videoScanlinePhaseShiftOffset" min="0" max="3" step="1" value="0">
+                <span id="videoScanlinePhaseShiftOffsetValue">0</span>
+            </div>
+        </div>
+    </details>
+
+    <!-- System Controls -->
+    <details>
+        <summary><strong>System</strong></summary>
+        <div class="control-group">
+            <div class="control-item">
+                <input type="checkbox" id="blackLineCut"> Black Line Cut
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="precise"> Precise Mode
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="outputNTSC" checked> Output NTSC
+            </div>
+            <div class="control-item">
+                <input type="checkbox" id="enableDebugLog"> Enable Debug Log
+            </div>
+            <div class="control-item">
+                <label>Random Seed:</label>
+                <input type="number" id="randomSeed" min="0" max="4294967295" value="12345">
+            </div>
+            <div class="control-item">
+                <label>Random Seed 2:</label>
+                <input type="number" id="randomSeed2" min="0" max="4294967295" value="67890">
+            </div>
+        </div>
+    </details>
 
     <div><input type="checkbox" id="enableCompression" checked> Enable auto-resize</div>
     <div id="compressionSettings">
@@ -92,7 +279,7 @@
         Max Height (0 = no limit): <input type="number" id="maxHeight" min="0" max="4096" value="0">
     </div>
 
-    <div id="processStatus" style="display: none;">Processing image...</div>
+
     <div id="error" style="display: none; color: red;"></div>
 
     <div id="imageDisplay" style="display: none;">
@@ -107,148 +294,8 @@
             </div>
         </div>
     </div>
-    <div class="tech-overview">
-        <h3>Technical Implementation</h3>
-        <p>The technical foundation of this simulation is a comprehensive digital signal processing pipeline implemented
-            in Go, meticulously engineered to emulate the complex artifacts and signal degradations inherent in the NTSC
-            analog video standard. The system operates at the fundamental sampling rate of 14.318 MHz, corresponding to
-            four times the NTSC color subcarrier frequency of 3.579545 MHz, ensuring accurate temporal and spectral
-            representation of the analog signal characteristics.</p>
-
-        <h4>Color Space Transformation and Quantization</h4>
-        <p>The process initiates with the transformation of the input image's color representation from the conventional
-            RGB model to the YIQ color space, a critical step that decouples luminance (Y) from chrominance (I and Q)
-            components. This separation is fundamental to NTSC encoding, as it enables backward compatibility with
-            monochrome receivers while facilitating color transmission. The forward transformation from RGB to YIQ is
-            defined by the standardized matrix operation:</p>
-        \[
-        \begin{bmatrix} Y \\ I \\ Q \end{bmatrix} =
-        \begin{bmatrix} 0.299 & 0.587 & 0.114 \\ 0.596 & -0.274 & -0.322 \\ 0.211 & -0.523 & 0.312 \end{bmatrix}
-        \begin{bmatrix} R \\ G \\ B \end{bmatrix}
-        \]
-        <p>In the implementation, the Y component is computed first using the weighted sum \(Y = 0.299R + 0.587G +
-            0.114B\), followed by the chrominance components calculated as \(I = -0.27(B-Y) + 0.74(R-Y)\) and \(Q =
-            0.41(B-Y) + 0.48(R-Y)\). To maintain numerical precision and facilitate subsequent integer arithmetic
-            operations, the YIQ components are scaled by a factor of 256 and stored as fixed-point integers. The inverse
-            transformation for display purposes employs the matrix:</p>
-        \[
-        \begin{bmatrix} R \\ G \\ B \end{bmatrix} =
-        \begin{bmatrix} 1.000 & 0.956 & 0.621 \\ 1.000 & -0.272 & -0.647 \\ 1.000 & -1.106 & 1.703 \end{bmatrix}
-        \begin{bmatrix} Y \\ I \\ Q \end{bmatrix}
-        \]
-
-        <h4>Analog Bandwidth Simulation and Filtering</h4>
-        <p>The analog transmission medium imposes severe bandwidth constraints on the video signal, necessitating
-            sophisticated filtering to simulate these limitations accurately. The system employs a first-order Infinite
-            Impulse Response (IIR) low-pass filter, characterized by the recursive difference equation:</p>
-        \[ y[n] = \alpha \cdot y[n-1] + (1-\alpha) \cdot x[n] \]
-        <p>where the filter coefficient \(\alpha\) is derived from the desired cutoff frequency \(f_c\) and sampling
-            rate \(f_s\) through the relationship \(\alpha = e^{-2\pi f_c / f_s}\). The NTSC standard specifies distinct
-            bandwidth allocations for luminance and chrominance: the Y channel extends to approximately 4.2 MHz, while
-            the I and Q channels are limited to 1.3 MHz and 0.4 MHz respectively. These asymmetric bandwidth constraints
-            are implemented through separate filter instances with appropriately configured cutoff frequencies.</p>
-
-        <h4>Composite Pre-emphasis and De-emphasis</h4>
-        <p>To compensate for the high-frequency attenuation inherent in analog transmission and enhance perceived image
-            sharpness, the NTSC system incorporates pre-emphasis and de-emphasis mechanisms. The pre-emphasis stage
-            selectively amplifies higher frequencies in the luminance channel through a high-pass filtering operation
-            combined with gain control. The mathematical formulation is expressed as:</p>
-        \[ Y_{out}[n] = Y_{in}[n] + \epsilon \cdot (Y_{in}[n] - \alpha_{hp} \cdot Y_{in}[n-1]) \]
-        <p>where \(\epsilon\) represents the pre-emphasis coefficient controlling the magnitude of high-frequency boost,
-            and \(\alpha_{hp}\) defines the high-pass filter characteristics. This process effectively creates a
-            "peaking" response that counteracts subsequent low-pass filtering effects while introducing the
-            characteristic "sharpening" artifacts observed in analog video systems.</p>
-
-        <h4>Chrominance Subcarrier Modulation and Demodulation Artifacts</h4>
-        <p>In the NTSC composite signal, chrominance information is quadrature-modulated onto a 3.579545 MHz color
-            subcarrier using the I and Q components as in-phase and quadrature signals respectively. The modulated
-            chrominance signal is mathematically represented as:</p>
-        \[ C(t) = I(t) \cos(2\pi f_{sc} t) + Q(t) \sin(2\pi f_{sc} t) \]
-        <p>where \(f_{sc}\) denotes the subcarrier frequency. Demodulation imperfections in analog receivers often
-            result in spatial misalignment between luminance and chrominance components, manifesting as the
-            characteristic "color bleeding" artifact. This phenomenon is simulated by applying independent spatial
-            offsets to the I and Q components:</p>
-        \[ I_{out}(x, y) = I_{in}(x - \Delta x_I, y - \Delta y_I) \]
-        \[ Q_{out}(x, y) = Q_{in}(x - \Delta x_Q, y - \Delta y_Q) \]
-        <p>where \((\Delta x_I, \Delta y_I)\) and \((\Delta x_Q, \Delta y_Q)\) represent user-configurable displacement
-            vectors that simulate timing errors and phase distortions in the demodulation process.</p>
-
-        <h4>Frequency Domain Ringing and Gibbs Phenomena</h4>
-        <p>Sharp transitions in the video signal, when subjected to bandwidth-limited transmission, exhibit
-            characteristic "ringing" artifacts due to the Gibbs phenomenon. This effect is particularly pronounced at
-            high-contrast edges where the finite bandwidth of the transmission medium cannot adequately represent the
-            sharp discontinuities. The simulation implements this through frequency-domain processing using the Discrete
-            Fourier Transform:</p>
-        \[ X[k] = \sum_{n=0}^{N-1} x[n] e^{-j2\pi kn/N} \]
-        <p>A custom band-pass filter \(H[k]\) is applied in the frequency domain to selectively attenuate or emphasize
-            specific frequency components, particularly those around the color subcarrier frequency. The filter response
-            is designed to emulate the characteristics of analog notch filters used in NTSC decoders:</p>
-        \[ H[k] = \begin{cases}
-        1 & \text{if } |k - k_{sc}| > \Delta k \\
-        \beta & \text{if } |k - k_{sc}| \leq \Delta k
-        \end{cases} \]
-        <p>where \(k_{sc}\) corresponds to the subcarrier frequency bin, \(\Delta k\) defines the notch width, and
-            \(\beta\) represents the attenuation factor. The processed signal is then transformed back to the time
-            domain using the Inverse Discrete Fourier Transform.</p>
-
-        <h4>Stochastic Noise Generation and Temporal Correlation</h4>
-        <p>Analog video signals are inherently susceptible to various noise sources, including thermal noise,
-            electromagnetic interference, and quantization artifacts. The system implements a sophisticated noise
-            generation module based on the XorWow pseudo-random number generator, which provides excellent statistical
-            properties and computational efficiency. The generator maintains internal state variables \((x, y, z, w, v,
-            d)\) and produces pseudo-random sequences through the recurrence relation:</p>
-        \[ \begin{align}
-        t &= x \oplus (x \gg 2) \\
-        x &= y, \quad y = z, \quad z = w, \quad w = v \\
-        v &= (v \oplus (v \ll 4)) \oplus (t \oplus (t \ll 1)) \\
-        d &= d + 362437
-        \end{align} \]
-        <p>The system provides two distinct noise processing modes to accommodate different computational requirements
-            and accuracy demands. The non-precise mode employs a computationally efficient approach where a large
-            pre-computed noise array is smoothed using a simple exponential moving average filter with \(\alpha = 0.5\).
-            In contrast, the precise mode generates noise dynamically for each scanline, implementing temporal
-            correlation through an accumulative smoothing process:</p>
-        \[ n[i] = \frac{n[i-1] + r[i]}{2} + \frac{n[i-1] + r[i-1]}{4} \]
-        <p>where \(n[i]\) represents the correlated noise value at pixel \(i\), and \(r[i]\) denotes the raw random
-            number. This formulation introduces both spatial and temporal correlation, more accurately reflecting the
-            characteristics of real analog noise.</p>
-
-        <h4>VHS Tape Degradation Modeling</h4>
-        <p>The simulation incorporates detailed modeling of VHS tape-specific degradations to enhance authenticity. The
-            mechanical instabilities inherent in VHS playback systems manifest as time-base errors, simulated through
-            the "edge wave" effect. This is implemented by generating random horizontal displacement values
-            \(\delta[j]\) for each scanline \(j\), followed by low-pass filtering to create smooth, correlated
-            variations:</p>
-        \[ \delta_{filtered}[j] = \alpha_{wave} \cdot \delta_{filtered}[j-1] + (1-\alpha_{wave}) \cdot \delta[j] \]
-        <p>The head-switching noise effect replicates the signal disruption that occurs during the transition between
-            video heads in the helical scan mechanism. This is modeled as a localized distortion band, typically
-            positioned in the lower portion of the frame, where both geometric displacement and additive noise are
-            applied with increased intensity. The mathematical representation involves a spatial weighting function
-            \(w(y)\) that defines the affected region:</p>
-        \[ w(y) = \begin{cases}
-        0 & \text{if } y < y_{start} \\ \sin^2\left(\frac{\pi(y - y_{start})}{y_{end} - y_{start}}\right) & \text{if }
-            y_{start} \leq y \leq y_{end} \\ 0 & \text{if } y> y_{end}
-            \end{cases} \]
-            <p>Chrominance degradation, a common artifact in aged VHS tapes, is simulated through controlled attenuation
-                of the I and Q components using a degradation factor \(\gamma\):</p>
-            \[ I_{degraded} = \gamma \cdot I_{original}, \quad Q_{degraded} = \gamma \cdot Q_{original} \]
-            <p>where \(\gamma\) ranges from 0 (complete chroma loss) to 1 (no degradation), allowing for precise control
-                over the degree of color desaturation.</p>
-
-            <h4>Interlaced Field Processing and Temporal Artifacts</h4>
-            <p>The NTSC standard employs interlaced scanning, where each frame consists of two fields containing
-                alternating scanlines. This temporal sampling introduces specific artifacts that must be accurately
-                modeled. The system processes odd and even fields independently, maintaining separate processing
-                contexts to preserve the temporal characteristics of the interlaced format. Field-specific artifacts,
-                such as inter-field motion blur and temporal aliasing, are simulated through controlled blending of
-                adjacent field data:</p>
-            \[ F_{blended}[i] = \alpha_{temporal} \cdot F_{current}[i] + (1-\alpha_{temporal}) \cdot F_{previous}[i] \]
-            <p>where \(F_{current}\) and \(F_{previous}\) represent the current and previous field data respectively,
-                and \(\alpha_{temporal}\) controls the degree of temporal blending. This comprehensive signal processing
-                pipeline, operating at the authentic NTSC sampling rate and incorporating mathematically rigorous models
-                of analog video artifacts, successfully reproduces the complex visual characteristics of vintage
-                television and VHS playback systems with exceptional fidelity and technical accuracy.</p>
-    </div>
+    <div id="processStatus" style="display: none;">Processing image...</div>
+<div id="tech-overview" class="section">
 
     <script>
         let wasmWorker = null;
@@ -266,6 +313,10 @@
                 if (data.type === 'wasmLoaded') {
                     wasmReady = true;
                     document.getElementById('wasmStatus').textContent = 'Ready to process images!';
+                    
+                    // Initialize debug mode based on checkbox state
+                    const debugEnabled = document.getElementById('enableDebugLog').checked;
+                    wasmWorker.postMessage({ type: 'setDebugMode', enabled: debugEnabled });
 
                     if (currentImageData) { 
                         processImage();
@@ -341,6 +392,25 @@
                     });
                 }
             });
+            
+            // Add listeners for checkboxes
+            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                if (checkbox.id === 'enableDebugLog') {
+                    // Special handling for debug log checkbox
+                    checkbox.addEventListener('change', () => {
+                        if (wasmReady) {
+                            wasmWorker.postMessage({ type: 'setDebugMode', enabled: checkbox.checked });
+                        }
+                    });
+                } else {
+                    checkbox.addEventListener('change', () => {
+                        if (currentImageData && wasmReady) {
+                            processImage();
+                        }
+                    });
+                }
+            });
         }
 
         function loadPreset(presetName) {
@@ -357,13 +427,15 @@
                 if (data.type === 'presetConfig') {
                     const config = JSON.parse(data.config);
                     document.getElementById('compositePreemphasis').value = config.CompositePreemphasis || 0;
-                    document.getElementById('colorBleed').value = (config.ColorBleedHoriz || 0) / 10;
+                    document.getElementById('colorBleedHoriz').value = config.ColorBleedHoriz || 0;
                     document.getElementById('ringing').value = config.Ringing || 0;
-                    document.getElementById('videoNoise').value = (config.VideoNoise || 0) / 100;
-                    document.getElementById('videoChromaNoise').value = (config.VideoChromaNoise || 0) / 100;
-                    document.getElementById('vhsLumaLowpass').value = config.VHSOutSharpen || 0;
-                    document.getElementById('vhsChromaLowpass').value = config.VHSChromaVertBlend ? 0.3 : 0;
-                    document.getElementById('vhsSharpen').value = config.VHSSharpen || 0;
+                    document.getElementById('videoNoise').value = config.VideoNoise || 0;
+                    document.getElementById('videoChromaNoise').value = config.VideoChromaNoise || 0;
+                    document.getElementById('vhsOutSharpen').value = config.VHSOutSharpen || 0;
+                    document.getElementById('vhsChromaVertBlend').checked = config.VHSChromaVertBlend || false;
+                    document.getElementById('headSwitchingSpeed').value = config.HeadSwitchingSpeed || 0;
+                    document.getElementById('blackLineCut').checked = config.BlackLineCut || false;
+                    document.getElementById('precise').checked = config.Precise || false;
                     updateSliderValues();
                 } else if (data.type === 'error') {
                     showError(data.message);
@@ -397,37 +469,42 @@
 
             const config = {
                 CompositePreemphasis: parseFloat(document.getElementById('compositePreemphasis').value),
-                CompositePreemphasisCut: 1000000.0,
-                ColorBleedBefore: true,
-                ColorBleedHoriz: Math.round(parseFloat(document.getElementById('colorBleed').value) * 10),
-                ColorBleedVert: 0,
+                CompositePreemphasisCut: parseFloat(document.getElementById('compositePreemphasisCut').value),
+                ColorBleedBefore: document.getElementById('colorBleedBefore').checked,
+                ColorBleedHoriz: parseInt(document.getElementById('colorBleedHoriz').value),
+                ColorBleedVert: parseInt(document.getElementById('colorBleedVert').value),
                 Ringing: parseFloat(document.getElementById('ringing').value),
-                EnableRinging2: false,
-                RingingPower: 2,
-                RingingShift: 0,
-                FreqNoiseSize: 0,
-                FreqNoiseAmplitude: 2,
-                CompositeInChromaLowpass: true,
-                CompositeOutChromaLowpass: true,
-                CompositeOutChromaLowpassLite: true,
-                VideoNoise: Math.round(parseFloat(document.getElementById('videoNoise').value) * 100),
-                VideoChromaNoise: Math.round(parseFloat(document.getElementById('videoChromaNoise').value) * 100),
-                VideoChromaPhaseNoise: Math.round(0.01 * 100),
-                VideoChromaLoss: 0,
-                SubcarrierAmplitude: 50,
-                SubcarrierAmplitudeBack: 50,
-                EmulatingVHS: false,
-                NoColorSubcarrier: false,
-                VHSChromaVertBlend: true,
-                VHSSVideoOut: false,
-                VHSOutSharpen: parseFloat(document.getElementById('vhsLumaLowpass').value),
-                VHSEdgeWave: Math.round(0.1 * 100),
-                VHSHeadSwitching: false,
+                EnableRinging2: document.getElementById('enableRinging2').checked,
+                RingingPower: parseInt(document.getElementById('ringingPower').value),
+                RingingShift: parseInt(document.getElementById('ringingShift').value),
+                FreqNoiseSize: parseFloat(document.getElementById('freqNoiseSize').value),
+                FreqNoiseAmplitude: parseFloat(document.getElementById('freqNoiseAmplitude').value),
+                CompositeInChromaLowpass: document.getElementById('compositeInChromaLowpass').checked,
+                CompositeOutChromaLowpass: document.getElementById('compositeOutChromaLowpass').checked,
+                CompositeOutChromaLowpassLite: document.getElementById('compositeOutChromaLowpassLite').checked,
+                VideoNoise: parseInt(document.getElementById('videoNoise').value),
+                VideoChromaNoise: parseInt(document.getElementById('videoChromaNoise').value),
+                VideoChromaPhaseNoise: parseInt(document.getElementById('videoChromaPhaseNoise').value),
+                VideoChromaLoss: parseInt(document.getElementById('videoChromaLoss').value),
+                SubcarrierAmplitude: parseInt(document.getElementById('subcarrierAmplitude').value),
+                SubcarrierAmplitudeBack: parseInt(document.getElementById('subcarrierAmplitude').value),
+                EmulatingVHS: document.getElementById('emulatingVHS').checked,
+                NoColorSubcarrier: document.getElementById('noColorSubcarrier').checked,
+                VHSChromaVertBlend: document.getElementById('vhsChromaVertBlend').checked,
+                VHSSVideoOut: document.getElementById('vhsSVideoOut').checked,
+                VHSOutSharpen: parseFloat(document.getElementById('vhsOutSharpen').value),
+                VHSEdgeWave: parseInt(document.getElementById('vhsEdgeWave').value),
+                VHSHeadSwitching: document.getElementById('vhsHeadSwitching').checked,
                 VHSHeadSwitchingPhaseNoise: 0.05,
-                OutputNTSC: true,
-                VideoScanlinePhaseShift: 180,
-                VideoScanlinePhaseShiftOffset: 0,
-                OutputVHSTapeSpeed: 0
+                OutputNTSC: document.getElementById('outputNTSC').checked,
+                VideoScanlinePhaseShift: parseInt(document.getElementById('videoScanlinePhaseShift').value),
+                VideoScanlinePhaseShiftOffset: parseInt(document.getElementById('videoScanlinePhaseShiftOffset').value),
+                OutputVHSTapeSpeed: parseInt(document.getElementById('outputVHSTapeSpeed').value),
+                HeadSwitchingSpeed: parseInt(document.getElementById('headSwitchingSpeed').value),
+                BlackLineCut: document.getElementById('blackLineCut').checked,
+                Precise: document.getElementById('precise').checked,
+                RandomSeed: parseInt(document.getElementById('randomSeed').value),
+                RandomSeed2: parseInt(document.getElementById('randomSeed2').value)
             };
 
             const enableCompression = document.getElementById('enableCompression').checked;
@@ -544,4 +621,335 @@
     </script>
 </body>
 
-</html>
+</html><h2 id="technical-implementation">Technical Implementation</h2>
+<p>The technical foundation of this simulation is a comprehensive
+digital signal processing pipeline implemented in Go, meticulously
+engineered to emulate the complex artifacts and signal degradations
+inherent in the NTSC analog video standard. The system operates at the
+fundamental sampling rate of 14.318 MHz, corresponding to four times the
+NTSC color subcarrier frequency of 3.579545 MHz, ensuring accurate
+temporal and spectral representation of the analog signal
+characteristics.</p>
+<h3 id="color-space-transformation-and-quantization">Color Space
+Transformation and Quantization</h3>
+<p>The process initiates with the transformation of the input image’s
+color representation from the conventional RGB model to the YIQ color
+space, a critical step that decouples luminance (Y) from chrominance (I
+and Q) components. This separation is fundamental to NTSC encoding, as
+it enables backward compatibility with monochrome receivers while
+facilitating color transmission. The forward transformation from RGB to
+YIQ is defined by the standardized matrix operation:</p>
+<p><span class="math display">\[
+\begin{bmatrix} Y \\ I \\ Q \end{bmatrix} =
+\begin{bmatrix} 0.299 &amp; 0.587 &amp; 0.114 \\ 0.596 &amp; -0.274
+&amp; -0.322 \\ 0.211 &amp; -0.523 &amp; 0.312 \end{bmatrix}
+\begin{bmatrix} R \\ G \\ B \end{bmatrix}
+\]</span></p>
+<p>In the implementation, the Y component is computed first using the
+weighted sum <span class="math inline">\(Y = 0.299R + 0.587G +
+0.114B\)</span>, followed by the chrominance components calculated as
+<span class="math inline">\(I = -0.27(B-Y) + 0.74(R-Y)\)</span> and
+<span class="math inline">\(Q = 0.41(B-Y) + 0.48(R-Y)\)</span>. To
+maintain numerical precision and facilitate subsequent integer
+arithmetic operations, the YIQ components are scaled by a factor of 256
+and stored as fixed-point integers. The inverse transformation for
+display purposes employs the matrix:</p>
+<p><span class="math display">\[
+\begin{bmatrix} R \\ G \\ B \end{bmatrix} =
+\begin{bmatrix} 1.000 &amp; 0.956 &amp; 0.621 \\ 1.000 &amp; -0.272
+&amp; -0.647 \\ 1.000 &amp; -1.106 &amp; 1.703 \end{bmatrix}
+\begin{bmatrix} Y \\ I \\ Q \end{bmatrix}
+\]</span></p>
+<h3 id="analog-bandwidth-simulation-and-filtering">Analog Bandwidth
+Simulation and Filtering</h3>
+<p>The analog transmission medium imposes severe bandwidth constraints
+on the video signal, necessitating sophisticated filtering to simulate
+these limitations accurately. The system employs a first-order Infinite
+Impulse Response (IIR) low-pass filter, characterized by the recursive
+difference equation:</p>
+<p><span class="math display">\[ y[n] = \alpha \cdot y[n-1] + (1-\alpha)
+\cdot x[n] \]</span></p>
+<p>where the filter coefficient <span
+class="math inline">\(\alpha\)</span> is derived from the desired cutoff
+frequency <span class="math inline">\(f_c\)</span> and sampling rate
+<span class="math inline">\(f_s\)</span> through the relationship <span
+class="math inline">\(\alpha = e^{-2\pi f_c / f_s}\)</span>. The NTSC
+standard specifies distinct bandwidth allocations for luminance and
+chrominance: the Y channel extends to approximately 4.2 MHz, while the I
+and Q channels are limited to 1.3 MHz and 0.4 MHz respectively. These
+asymmetric bandwidth constraints are implemented through separate filter
+instances with appropriately configured cutoff frequencies.</p>
+<h3 id="composite-pre-emphasis-and-de-emphasis">Composite Pre-emphasis
+and De-emphasis</h3>
+<p>To compensate for the high-frequency attenuation inherent in analog
+transmission and enhance perceived image sharpness, the NTSC system
+incorporates pre-emphasis and de-emphasis mechanisms. The pre-emphasis
+stage selectively amplifies higher frequencies in the luminance channel
+through a high-pass filtering operation combined with gain control. The
+mathematical formulation is expressed as:</p>
+<p><span class="math display">\[ Y_{out}[n] = Y_{in}[n] + \epsilon \cdot
+(Y_{in}[n] - \alpha_{hp} \cdot Y_{in}[n-1]) \]</span></p>
+<p>where <span class="math inline">\(\epsilon\)</span> represents the
+pre-emphasis coefficient controlling the magnitude of high-frequency
+boost, and <span class="math inline">\(\alpha_{hp}\)</span> defines the
+high-pass filter characteristics. This process effectively creates a
+“peaking” response that counteracts subsequent low-pass filtering
+effects while introducing the characteristic “sharpening” artifacts
+observed in analog video systems.</p>
+<h3
+id="chrominance-subcarrier-modulation-and-demodulation-artifacts">Chrominance
+Subcarrier Modulation and Demodulation Artifacts</h3>
+<p>In the NTSC composite signal, chrominance information is
+quadrature-modulated onto a 3.579545 MHz color subcarrier using the I
+and Q components as in-phase and quadrature signals respectively. The
+modulated chrominance signal is mathematically represented as:</p>
+<p><span class="math display">\[ C(t) = I(t) \cos(2\pi f_{sc} t) + Q(t)
+\sin(2\pi f_{sc} t) \]</span></p>
+<p>where <span class="math inline">\(f_{sc}\)</span> denotes the
+subcarrier frequency. Demodulation imperfections in analog receivers
+often result in spatial misalignment between luminance and chrominance
+components, manifesting as the characteristic “color bleeding” artifact.
+This phenomenon is simulated by applying independent spatial offsets to
+the I and Q components:</p>
+<p><span class="math display">\[ I_{out}(x, y) = I_{in}(x - \Delta x_I,
+y - \Delta y_I) \]</span> <span class="math display">\[ Q_{out}(x, y) =
+Q_{in}(x - \Delta x_Q, y - \Delta y_Q) \]</span></p>
+<p>where <span class="math inline">\((\Delta x_I, \Delta y_I)\)</span>
+and <span class="math inline">\((\Delta x_Q, \Delta y_Q)\)</span>
+represent user-configurable displacement vectors that simulate timing
+errors and phase distortions in the demodulation process.</p>
+<h3 id="frequency-domain-ringing-and-gibbs-phenomena">Frequency Domain
+Ringing and Gibbs Phenomena</h3>
+<p>Sharp transitions in the video signal, when subjected to
+bandwidth-limited transmission, exhibit characteristic “ringing”
+artifacts due to the Gibbs phenomenon. This effect is particularly
+pronounced at high-contrast edges where the finite bandwidth of the
+transmission medium cannot adequately represent the sharp
+discontinuities. The simulation implements this through frequency-domain
+processing using the Discrete Fourier Transform:</p>
+<p><span class="math display">\[ X[k] = \sum_{n=0}^{N-1} x[n] e^{-j2\pi
+kn/N} \]</span></p>
+<p>A custom band-pass filter <span class="math inline">\(H[k]\)</span>
+is applied in the frequency domain to selectively attenuate or emphasize
+specific frequency components, particularly those around the color
+subcarrier frequency. The filter response is designed to emulate the
+characteristics of analog notch filters used in NTSC decoders:</p>
+<p><span class="math display">\[ H[k] = \begin{cases}
+1 &amp; \text{if } |k - k_{sc}| &gt; \Delta k \\
+\beta &amp; \text{if } |k - k_{sc}| \leq \Delta k
+\end{cases} \]</span></p>
+<p>where <span class="math inline">\(k_{sc}\)</span> corresponds to the
+subcarrier frequency bin, <span class="math inline">\(\Delta k\)</span>
+defines the notch width, and <span class="math inline">\(\beta\)</span>
+represents the attenuation factor. The processed signal is then
+transformed back to the time domain using the Inverse Discrete Fourier
+Transform.</p>
+<h3 id="stochastic-noise-generation-and-temporal-correlation">Stochastic
+Noise Generation and Temporal Correlation</h3>
+<p>Analog video signals are inherently susceptible to various noise
+sources, including thermal noise, electromagnetic interference, and
+quantization artifacts. The system implements a sophisticated noise
+generation module based on the XorWow pseudo-random number generator,
+which provides excellent statistical properties and computational
+efficiency. The generator maintains internal state variables <span
+class="math inline">\((x, y, z, w, v, d)\)</span> and produces
+pseudo-random sequences through the recurrence relation:</p>
+<p><span class="math display">\[ \begin{align}
+t &amp;= x \oplus (x \gg 2) \\
+x &amp;= y, \quad y = z, \quad z = w, \quad w = v \\
+v &amp;= (v \oplus (v \ll 4)) \oplus (t \oplus (t \ll 1)) \\
+d &amp;= d + 362437
+\end{align} \]</span></p>
+<p>The system provides two distinct noise processing modes to
+accommodate different computational requirements and accuracy demands.
+The non-precise mode employs a computationally efficient approach where
+a large pre-computed noise array is smoothed using a simple exponential
+moving average filter with <span class="math inline">\(\alpha =
+0.5\)</span>. In contrast, the precise mode generates noise dynamically
+for each scanline, implementing temporal correlation through an
+accumulative smoothing process:</p>
+<p><span class="math display">\[ n[i] = \frac{n[i-1] + r[i]}{2} +
+\frac{n[i-1] + r[i-1]}{4} \]</span></p>
+<p>where <span class="math inline">\(n[i]\)</span> represents the
+correlated noise value at pixel <span class="math inline">\(i\)</span>,
+and <span class="math inline">\(r[i]\)</span> denotes the raw random
+number. This formulation introduces both spatial and temporal
+correlation, more accurately reflecting the characteristics of real
+analog noise.</p>
+<h3 id="vhs-tape-degradation-modeling">VHS Tape Degradation
+Modeling</h3>
+<p>The simulation incorporates detailed modeling of VHS tape-specific
+degradations to enhance authenticity. The mechanical instabilities
+inherent in VHS playback systems manifest as time-base errors, simulated
+through the “edge wave” effect. This is implemented by generating random
+horizontal displacement values <span
+class="math inline">\(\delta[j]\)</span> for each scanline <span
+class="math inline">\(j\)</span>, followed by low-pass filtering to
+create smooth, correlated variations:</p>
+<p><span class="math display">\[ \delta_{filtered}[j] = \alpha_{wave}
+\cdot \delta_{filtered}[j-1] + (1-\alpha_{wave}) \cdot \delta[j]
+\]</span></p>
+<p>The head-switching noise effect replicates the signal disruption that
+occurs during the transition between video heads in the helical scan
+mechanism. This is modeled as a localized distortion band, typically
+positioned in the lower portion of the frame, where both geometric
+displacement and additive noise are applied with increased intensity.
+The mathematical representation involves a spatial weighting function
+<span class="math inline">\(w(y)\)</span> that defines the affected
+region:</p>
+<p><span class="math display">\[ w(y) = \begin{cases}
+0 &amp; \text{if } y &lt; y_{start} \\
+\sin^2\left(\frac{\pi(y - y_{start})}{y_{end} - y_{start}}\right) &amp;
+\text{if } y_{start} \leq y \leq y_{end} \\
+0 &amp; \text{if } y &gt; y_{end}
+\end{cases} \]</span></p>
+<p>Chrominance degradation, a common artifact in aged VHS tapes, is
+simulated through controlled attenuation of the I and Q components using
+a degradation factor <span class="math inline">\(\gamma\)</span>:</p>
+<p><span class="math display">\[ I_{degraded} = \gamma \cdot
+I_{original}, \quad Q_{degraded} = \gamma \cdot Q_{original}
+\]</span></p>
+<p>where <span class="math inline">\(\gamma\)</span> ranges from 0
+(complete chroma loss) to 1 (no degradation), allowing for precise
+control over the degree of color desaturation.</p>
+<h3 id="interlaced-field-processing-and-temporal-artifacts">Interlaced
+Field Processing and Temporal Artifacts</h3>
+<p>The NTSC standard employs interlaced scanning, where each frame
+consists of two fields containing alternating scanlines. This temporal
+sampling introduces specific artifacts that must be accurately modeled.
+The system processes odd and even fields independently, maintaining
+separate processing contexts to preserve the temporal characteristics of
+the interlaced format. Field-specific artifacts, such as inter-field
+motion blur and temporal aliasing, are simulated through controlled
+blending of adjacent field data:</p>
+<p><span class="math display">\[ F_{blended}[i] = \alpha_{temporal}
+\cdot F_{current}[i] + (1-\alpha_{temporal}) \cdot F_{previous}[i]
+\]</span></p>
+<p>where <span class="math inline">\(F_{current}\)</span> and <span
+class="math inline">\(F_{previous}\)</span> represent the current and
+previous field data respectively, and <span
+class="math inline">\(\alpha_{temporal}\)</span> controls the degree of
+temporal blending.</p>
+<h3 id="advanced-chroma-modulation-and-demodulation-pipeline">Advanced
+Chroma Modulation and Demodulation Pipeline</h3>
+<p>The implementation features a sophisticated chroma processing
+pipeline that accurately models the NTSC composite signal generation and
+decoding process. The <code>chromaIntoLuma</code> function simulates the
+encoding stage where I and Q chrominance components are modulated onto
+the luminance signal using quadrature amplitude modulation. The
+modulation process employs pre-computed lookup tables for the subcarrier
+phase relationships:</p>
+<p><span class="math display">\[ U_{mult} = [1, 0, -1, 0], \quad
+V_{mult} = [0, 1, 0, -1] \]</span></p>
+<p>The composite signal generation is mathematically expressed as:</p>
+<p><span class="math display">\[ Y_{composite}[x] = Y_{original}[x] +
+\frac{A_{sc}}{50} \cdot (I[x] \cdot U_{mult}[\xi + x \bmod 4] + Q[x]
+\cdot V_{mult}[\xi + x \bmod 4]) \]</span></p>
+<p>where <span class="math inline">\(A_{sc}\)</span> represents the
+subcarrier amplitude and <span class="math inline">\(\xi\)</span>
+denotes the phase offset determined by the scanline position and field
+number. The demodulation process, implemented in
+<code>chromaFromLuma</code>, employs a sophisticated comb filter
+approach to separate luminance and chrominance components. The algorithm
+utilizes a four-point moving average filter to extract the luminance
+component:</p>
+<p><span class="math display">\[ Y_{separated}[x] = \frac{1}{4}
+\sum_{i=0}^{3} Y_{composite}[x-2+i] \]</span></p>
+<p>The extracted chrominance signal undergoes phase-sensitive
+demodulation with alternating sign correction to recover the original I
+and Q components, followed by interpolation to restore full
+bandwidth.</p>
+<h3 id="memory-management-and-performance-optimization">Memory
+Management and Performance Optimization</h3>
+<p>The implementation incorporates advanced memory management strategies
+to achieve optimal performance in resource-constrained environments.
+Pre-allocated buffer pools are utilized to minimize garbage collection
+overhead during intensive processing operations. The
+<code>ChromaBuffers</code> structure maintains persistent memory
+allocations for intermediate processing arrays:</p>
+<p><span class="math display">\[ \text{BufferSet} = \{chroma, y_2,
+y_{d4}, sums, sums_0, acc, acc_4, cxi, cxi_1\} \]</span></p>
+<p>This approach eliminates repeated memory allocation and deallocation
+cycles, resulting in significant performance improvements for real-time
+processing applications. The system employs fixed-point arithmetic
+throughout the processing pipeline, utilizing 32-bit signed integers to
+represent fractional values with implicit scaling factors. This design
+choice provides computational efficiency while maintaining sufficient
+numerical precision for high-quality output.</p>
+<h3 id="fast-fourier-transform-implementation">Fast Fourier Transform
+Implementation</h3>
+<p>The frequency-domain processing capabilities are powered by a custom
+radix-2 Cooley-Tukey FFT implementation optimized for power-of-two input
+sizes. The algorithm employs bit-reversal permutation for efficient
+in-place computation:</p>
+<p><span class="math display">\[ X[k] = \sum_{n=0}^{N-1} x[n] \cdot
+W_N^{kn}, \quad W_N = e^{-j2\pi/N} \]</span></p>
+<p>The implementation features specialized <code>fftShift</code> and
+<code>ifftShift</code> functions to facilitate zero-frequency centering
+for filter design applications. The frequency-domain ringing simulation
+applies custom transfer functions to emulate the characteristics of
+analog video equipment:</p>
+<p><span class="math display">\[ H_{ring}[k] = \begin{cases}
+1 &amp; \text{if } |k - N/2| &gt; \alpha \cdot N/2 \\
+\beta + \eta \cdot \mathcal{N}(0,1) &amp; \text{otherwise}
+\end{cases} \]</span></p>
+<p>where <span class="math inline">\(\alpha\)</span> controls the filter
+bandwidth, <span class="math inline">\(\beta\)</span> represents the
+attenuation factor, and <span class="math inline">\(\eta \cdot
+\mathcal{N}(0,1)\)</span> introduces controlled frequency-domain noise
+to simulate analog component tolerances.</p>
+<h3 id="adaptive-vhs-tape-speed-modeling">Adaptive VHS Tape Speed
+Modeling</h3>
+<p>The VHS emulation subsystem incorporates detailed modeling of
+different tape speeds (SP, LP, EP) with corresponding bandwidth
+limitations and temporal artifacts. Each speed mode is characterized by
+specific luminance and chrominance cutoff frequencies:</p>
+<p><span class="math display">\[ \begin{align}
+\text{SP Mode:} &amp; \quad f_{Y,cut} = 2.4\text{ MHz}, \quad f_{C,cut}
+= 320\text{ kHz} \\
+\text{LP Mode:} &amp; \quad f_{Y,cut} = 1.9\text{ MHz}, \quad f_{C,cut}
+= 300\text{ kHz} \\
+\text{EP Mode:} &amp; \quad f_{Y,cut} = 1.4\text{ MHz}, \quad f_{C,cut}
+= 280\text{ kHz}
+\end{align} \]</span></p>
+<p>The chrominance delay compensation varies with tape speed to simulate
+the mechanical characteristics of different recording densities. The VHS
+sharpening algorithm applies controlled high-frequency emphasis to
+compensate for magnetic tape frequency response limitations:</p>
+<p><span class="math display">\[ Y_{sharpened}[x] = Y_{original}[x] +
+\gamma_{sharpen} \cdot (Y_{original}[x] - Y_{lowpass}[x]) \]</span></p>
+<p>where <span class="math inline">\(\gamma_{sharpen}\)</span>
+represents the sharpening coefficient and <span
+class="math inline">\(Y_{lowpass}\)</span> denotes the low-pass filtered
+luminance signal.</p>
+<h3
+id="scanline-phase-relationship-and-color-subcarrier-synchronization">Scanline
+Phase Relationship and Color Subcarrier Synchronization</h3>
+<p>The NTSC color subcarrier maintains a precise phase relationship with
+the horizontal sync signal to ensure proper color reproduction. The
+implementation accurately models this relationship through the
+<code>chromaLumaXi</code> function, which calculates the subcarrier
+phase offset for each scanline:</p>
+<p><span class="math display">\[ \xi(field, y) = \begin{cases}
+(field + offset + \lfloor y/2 \rfloor) \bmod 4 &amp; \text{if } \phi =
+90° \\
+((field + y) \bmod 2 + offset) \bmod 4 &amp; \text{if } \phi = 180° \\
+(field + offset) \bmod 4 &amp; \text{if } \phi = 270° \\
+offset \bmod 4 &amp; \text{otherwise}
+\end{cases} \]</span></p>
+<p>where <span class="math inline">\(\phi\)</span> represents the
+configured phase shift, <span class="math inline">\(field\)</span>
+denotes the current field number, and <span
+class="math inline">\(offset\)</span> provides additional phase
+adjustment. This precise phase control enables accurate simulation of
+color artifacts such as rainbow effects and dot crawl patterns that
+result from subcarrier timing errors in analog systems.</p>
+<p>This comprehensive signal processing pipeline, operating at the
+authentic NTSC sampling rate and incorporating mathematically rigorous
+models of analog video artifacts, successfully reproduces the complex
+visual characteristics of vintage television and VHS playback systems
+with exceptional fidelity and technical accuracy. The modular
+architecture facilitates precise control over individual artifact
+components while maintaining computational efficiency suitable for
+real-time applications.</p>
+</div>

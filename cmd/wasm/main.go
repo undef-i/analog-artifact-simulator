@@ -10,14 +10,14 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
-	ntscImage "analog-artifact-simulator/pkg/image"
-	"analog-artifact-simulator/pkg/ntsc"
+	ntscImage "ntsc-wasm/pkg/image"
+	"ntsc-wasm/pkg/ntsc"
 	"strings"
 	"syscall/js"
 	"time"
 )
 
-const debugMode = false
+var debugMode = false
 
 type ProcessRequest struct {
 	ImageData string           `json:"imageData"`
@@ -36,6 +36,8 @@ func main() {
 
 	js.Global().Set("processNTSC", js.FuncOf(processNTSC))
 	js.Global().Set("getPreset", js.FuncOf(getPreset))
+	js.Global().Set("setDebugMode", js.FuncOf(setDebugMode))
+	js.Global().Set("getDebugMode", js.FuncOf(getDebugMode))
 
 	fmt.Println("NTSC WebAssembly module loaded")
 	<-c
@@ -203,3 +205,21 @@ func getPreset(this js.Value, args []js.Value) interface{} {
 	}
 }
 
+func setDebugMode(this js.Value, args []js.Value) interface{} {
+	if len(args) != 1 {
+		return map[string]interface{}{
+			"error": "Invalid number of arguments",
+		}
+	}
+
+	debugMode = args[0].Bool()
+	return map[string]interface{}{
+		"debugMode": debugMode,
+	}
+}
+
+func getDebugMode(this js.Value, args []js.Value) interface{} {
+	return map[string]interface{}{
+		"debugMode": debugMode,
+	}
+}
