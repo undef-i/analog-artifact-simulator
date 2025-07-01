@@ -25,6 +25,24 @@
             overflow-y: hidden;
             padding: 10px 0;
         }
+
+        .image-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+
+        .image-section {
+            flex: 1;
+            min-width: 300px;
+            text-align: center;
+        }
+
+        .image-section img {
+            width: 100%;
+            height: auto;
+        }
     </style>
 </head>
 
@@ -50,18 +68,17 @@
     <button onclick="loadPreset('vhs')">VHS</button>
     <button onclick="loadPreset('broadcast')">Broadcast</button>
     <button onclick="loadPreset('vanilla')">Vanilla</button>
-
     <h3>Controls</h3>
-    <div>Composite Preemphasis: <input type="range" id="compositePreemphasis" min="0" max="1" step="0.01" value="0.5">
-        <span id="compositePreemphasisValue">0.5</span></div>
-    <div>Color Bleed: <input type="range" id="colorBleed" min="0" max="1" step="0.01" value="0.3"> <span
-            id="colorBleedValue">0.3</span></div>
-    <div>Ringing: <input type="range" id="ringing" min="0" max="1" step="0.01" value="0.2"> <span
-            id="ringingValue">0.2</span></div>
-    <div>Video Noise: <input type="range" id="videoNoise" min="0" max="1" step="0.01" value="0.05"> <span
-            id="videoNoiseValue">0.05</span></div>
-    <div>Chroma Noise: <input type="range" id="videoChromaNoise" min="0" max="1" step="0.01" value="0.02"> <span
-            id="videoChromaNoiseValue">0.02</span></div>
+    <div>Composite Preemphasis: <input type="range" id="compositePreemphasis" min="0" max="1" step="0.01" value="0.0">
+        <span id="compositePreemphasisValue">0.0</span></div>
+    <div>Color Bleed: <input type="range" id="colorBleed" min="0" max="1" step="0.01" value="0.0"> <span
+            id="colorBleedValue">0.0</span></div>
+    <div>Ringing: <input type="range" id="ringing" min="0" max="1" step="0.01" value="1.0"> <span
+            id="ringingValue">1.0</span></div>
+    <div>Video Noise: <input type="range" id="videoNoise" min="0" max="1" step="0.01" value="0.02"> <span
+            id="videoNoiseValue">0.02</span></div>
+    <div>Chroma Noise: <input type="range" id="videoChromaNoise" min="0" max="1" step="0.01" value="0.0"> <span
+            id="videoChromaNoiseValue">0.0</span></div>
     <div>VHS Luma: <input type="range" id="vhsLumaLowpass" min="0" max="1" step="0.01" value="0.5"> <span
             id="vhsLumaLowpassValue">0.5</span></div>
     <div>VHS Chroma: <input type="range" id="vhsChromaLowpass" min="0" max="1" step="0.01" value="0.3"> <span
@@ -75,17 +92,20 @@
         Max Height (0 = no limit): <input type="number" id="maxHeight" min="0" max="4096" value="0">
     </div>
 
-    <button id="processBtn" onclick="processImage()" disabled>Process Image</button>
-
-    <div id="loading" style="display: none;">Processing image...</div>
+    <div id="processStatus" style="display: none;">Processing image...</div>
     <div id="error" style="display: none; color: red;"></div>
 
     <div id="imageDisplay" style="display: none;">
-        <h3>Original</h3>
-        <img id="originalImage" style="max-width: 400px;">
-        <h3>Processed</h3>
-        <img id="processedImage" style="max-width: 400px;">
-        <div id="processTime"></div>
+        <div class="image-container">
+            <div class="image-section">
+                <h3>Original</h3>
+                <img id="originalImage">
+            </div>
+            <div class="image-section">
+                <h3>Processed</h3>
+                <img id="processedImage">
+            </div>
+        </div>
     </div>
     <div class="tech-overview">
         <h3>Technical Implementation</h3>
@@ -234,6 +254,8 @@
         let wasmWorker = null;
         let wasmReady = false;
         let currentImageData = null;
+        let currentRequestId = 0;
+        let processingRequestId = null;
 
         // Initialize Web Worker
         function initWorker() {
@@ -244,20 +266,28 @@
                 if (data.type === 'wasmLoaded') {
                     wasmReady = true;
                     document.getElementById('wasmStatus').textContent = 'Ready to process images!';
-                    document.getElementById('processBtn').disabled = false;
-                    if (currentImageData) { // If an image was already selected, process it
+
+                    if (currentImageData) { 
                         processImage();
                     }
                 } else if (data.type === 'result') {
+                    if (data.requestId && data.requestId !== processingRequestId) {
+                        return;
+                    }
                     const processedImage = document.getElementById('processedImage');
                     processedImage.src = data.imageData;
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('processBtn').disabled = false;
-                    document.getElementById('processTime').textContent = 'Processing time: ' + data.processTime + ' ms';
+                    document.getElementById('processStatus').style.display = 'none';
+                    document.getElementById('processStatus').textContent = 'Processing time: ' + data.processTime + ' ms';
+                    document.getElementById('processStatus').style.display = 'block';
+                    processingRequestId = null;
                 } else if (data.type === 'error') {
+                    if (data.requestId && data.requestId !== processingRequestId) {
+                        return;
+                    }
                     showError(data.message);
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('processBtn').disabled = false;
+                    document.getElementById('processStatus').style.display = 'none';
+                    processingRequestId = null;
+
                 }
             };
 
@@ -266,7 +296,7 @@
                 showError('Web Worker encountered an error.');
                 document.getElementById('wasmStatus').textContent = 'Failed to load WebAssembly module';
                 document.getElementById('loading').style.display = 'none';
-                document.getElementById('processBtn').disabled = true;
+
             };
         }
 
@@ -289,7 +319,7 @@
                 currentImageData = e.target.result;
                 document.getElementById('originalImage').src = currentImageData;
                 document.getElementById('imageDisplay').style.display = 'block';
-                document.getElementById('processBtn').disabled = !wasmReady;
+
                 if (wasmReady) {
                     processImage();
                 }
@@ -305,6 +335,9 @@
                     valueElement.textContent = slider.value;
                     slider.addEventListener('input', () => {
                         valueElement.textContent = slider.value;
+                        if (currentImageData && wasmReady) {
+                            processImage();
+                        }
                     });
                 }
             });
@@ -351,14 +384,16 @@
                 return;
             }
 
-            const loading = document.getElementById('loading');
-            const processBtn = document.getElementById('processBtn');
+            // Generate new request ID and cancel any previous processing
+            currentRequestId++;
+            const requestId = currentRequestId;
+            processingRequestId = requestId;
+
+            const processStatus = document.getElementById('processStatus');
             const errorDiv = document.getElementById('error');
-            const processTimeDiv = document.getElementById('processTime');
-            loading.style.display = 'block';
-            processBtn.disabled = true;
+            processStatus.style.display = 'block';
+            processStatus.textContent = 'Processing image...';
             errorDiv.style.display = 'none';
-            processTimeDiv.textContent = '';
 
             const config = {
                 CompositePreemphasis: parseFloat(document.getElementById('compositePreemphasis').value),
@@ -405,18 +440,25 @@
                 try {
                     imageDataToSend = await resizeImage(currentImageData, maxWidth, maxHeight);
                 } catch (error) {
-                    showError('Failed to resize image: ' + error.message);
-                    loading.style.display = 'none';
-                    processBtn.disabled = false;
+                    if (requestId === currentRequestId) {
+                        showError('Failed to resize image: ' + error.message);
+                        processStatus.style.display = 'none';
+                    }
                     return;
                 }
+            }
+
+            // Check if this request is still current before sending
+            if (requestId !== currentRequestId) {
+                return;
             }
 
             const request = {
                 imageData: imageDataToSend,
                 config: config,
                 maxWidth: maxWidth,
-                maxHeight: maxHeight
+                maxHeight: maxHeight,
+                requestId: requestId
             };
 
             // Send message to worker to process image
@@ -473,6 +515,23 @@
 
         updateSliderValues();
         toggleCompressionSettings();
+
+        // Add real-time listeners for number inputs
+        const numberInputs = document.querySelectorAll('input[type="number"]');
+        numberInputs.forEach(input => {
+            input.addEventListener('input', () => {
+                if (currentImageData && wasmReady) {
+                    processImage();
+                }
+            });
+        });
+
+        // Add real-time listener for compression checkbox
+        document.getElementById('enableCompression').addEventListener('change', () => {
+            if (currentImageData && wasmReady) {
+                processImage();
+            }
+        });
 
         document.addEventListener("DOMContentLoaded", function () {
             renderMathInElement(document.body, {

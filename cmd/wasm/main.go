@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+const debugMode = false
+
 type ProcessRequest struct {
 	ImageData string           `json:"imageData"`
 	Config    *ntsc.NtscConfig `json:"config"`
@@ -71,7 +73,9 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 			}
 		}
 	}
-	fmt.Printf("DEBUG: Base64 decode took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: Base64 decode took %v\n", time.Since(start))
+	}
 
 	// Decode image
 	start = time.Now()
@@ -86,12 +90,16 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 			"error": fmt.Sprintf("Failed to decode image: %v", err),
 		}
 	}
-	fmt.Printf("DEBUG: Image decode took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: Image decode took %v\n", time.Since(start))
+	}
 
 	// Convert to ntscImage
 	start = time.Now()
 	ntscImg := ntscImage.FromGoImage(img)
-	fmt.Printf("DEBUG: FromGoImage took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: FromGoImage took %v\n", time.Since(start))
+	}
 
 	maxWidth := req.MaxWidth
 	maxHeight := req.MaxHeight
@@ -100,7 +108,9 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 	if maxWidth > 0 || maxHeight > 0 {
 		start = time.Now()
 		ntscImg = ntscImg.Resize(maxWidth, maxHeight)
-		fmt.Printf("DEBUG: Resize took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: Resize took %v\n", time.Since(start))
+		}
 	}
 
 	processor := ntsc.NewNtscProcessor(req.Config)
@@ -108,12 +118,16 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 	// Process image
 	start = time.Now()
 	processedImg := processor.ProcessImage(ntscImg)
-	fmt.Printf("DEBUG: ProcessImage took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: ProcessImage took %v\n", time.Since(start))
+	}
 
 	// Convert back to Go image
 	start = time.Now()
 	resultImg := processedImg.ToGoImage()
-	fmt.Printf("DEBUG: ToGoImage took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: ToGoImage took %v\n", time.Since(start))
+	}
 
 	// Encode result image
 	start = time.Now()
@@ -124,14 +138,20 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 			"error": fmt.Sprintf("Failed to encode result image: %v", err),
 		}
 	}
-	fmt.Printf("DEBUG: Image encode took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: Image encode took %v\n", time.Since(start))
+	}
 
 	// Encode to base64
 	start = time.Now()
 	resultData := base64.StdEncoding.EncodeToString(buf.Bytes())
-	fmt.Printf("DEBUG: Base64 encode took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: Base64 encode took %v\n", time.Since(start))
+	}
 
-	fmt.Printf("DEBUG: Total processNTSC took %v\n", time.Since(startTotal))
+	if debugMode {
+		fmt.Printf("DEBUG: Total processNTSC took %v\n", time.Since(startTotal))
+	}
 	return map[string]interface{}{
 		"imageData": "data:image/png;base64," + resultData,
 	}

@@ -29,12 +29,25 @@ onmessage = function(e) {
             const processTime = (endTime - startTime).toFixed(1);
 
             if (result.error) {
-                postMessage({ type: 'error', message: result.error });
+                postMessage({ 
+                    type: 'error', 
+                    message: result.error,
+                    requestId: request.requestId 
+                });
             } else {
-                postMessage({ type: 'result', imageData: result.imageData, processTime: processTime });
+                postMessage({ 
+                    type: 'result', 
+                    imageData: result.imageData, 
+                    processTime: processTime,
+                    requestId: request.requestId 
+                });
             }
         } catch (error) {
-            postMessage({ type: 'error', message: 'Processing failed in worker: ' + error.message });
+            postMessage({ 
+                type: 'error', 
+                message: 'Processing failed in worker: ' + error.message,
+                requestId: request.requestId 
+            });
         }
     } else if (type === 'getPreset') {
         try {

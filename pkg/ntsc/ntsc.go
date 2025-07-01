@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 	"analog-artifact-simulator/pkg/image"
+	"analog-artifact-simulator/pkg/pool"
 	"analog-artifact-simulator/pkg/random"
 )
 
@@ -15,6 +16,7 @@ const (
 	M_PI          = math.Pi
 	Int_MIN_VALUE = -2147483648
 	Int_MAX_VALUE = 2147483647
+	debugMode     = false
 )
 
 type VHSSpeed struct {
@@ -201,18 +203,18 @@ func DefaultNtscConfig() *NtscConfig {
 	}
 }
 
-type YIQImage struct {
-	Data   []int32 // Y, I, Q components flattened: YYY...III...QQQ...
-	Width  int
-	Height int
-}
+type YIQImage = pool.YIQImage
 
 type NtscProcessor struct {
-	Config  *NtscConfig
-	Random  *random.XorWowRandom
-	Precise bool
-	Umult   []int32
-	Vmult   []int32
+	Config        *NtscConfig
+	Random        *random.XorWowRandom
+	Precise       bool
+	Umult         []int32
+	Vmult         []int32
+	chromaBuffers *ChromaBuffers
+	samplesBuffer []float64
+	int32Buffer   []int32
+	float64Buffer []float64
 }
 
 func NewNtscProcessor(config *NtscConfig) *NtscProcessor {
@@ -227,8 +229,10 @@ func NewNtscProcessor(config *NtscConfig) *NtscProcessor {
 }
 
 func (p *NtscProcessor) ProcessImage(img *image.Image) *image.Image {
-	dst := img.Clone()
+	dst := pool.DefaultImagePool.Get(img.Width, img.Height)
+	copy(dst.Data, img.Data)
 	yiq := p.bgr2yiq(img)
+	defer pool.DefaultYIQImagePool.Put(yiq)
 
 	var wg sync.WaitGroup
 	wg.Add(2) // Two fields to process
@@ -254,69 +258,97 @@ func (p *NtscProcessor) bgr2yiq(img *image.Image) *YIQImage {
 	height := img.Height
 	width := img.Width
 	
-	// Allocate a single flat slice for Y, I, Q components
-	yiqData := make([]int32, width*height*3)
+	yiq := pool.DefaultYIQImagePool.Get(width, height)
+	yiqData := yiq.Data
+	imgData := img.Data
 
-	imgData := img.Data // Direct access to underlying []uint8
-
+	// Batch process multiple pixels at once for better cache locality
+	batchSize := 8
 	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			idx := (y*width + x) * 3
-			r := float64(imgData[idx])
-			g := float64(imgData[idx+1])
-			b := float64(imgData[idx+2])
+		rowStart := y * width
+		imgRowStart := rowStart * 3
+		yRowStart := rowStart
+		iRowStart := height*width + rowStart
+		qRowStart := 2*height*width + rowStart
+		
+		// Process in batches for better performance
+		for x := 0; x < width; x += batchSize {
+			end := x + batchSize
+			if end > width {
+				end = width
+			}
+			
+			for i := x; i < end; i++ {
+				imgIdx := imgRowStart + i*3
+				r := int32(imgData[imgIdx])
+				g := int32(imgData[imgIdx+1])
+				b := int32(imgData[imgIdx+2])
 
-			dY := 0.30*r + 0.59*g + 0.11*b
+				// Use integer arithmetic where possible
+				dY := (77*r + 151*g + 28*b) >> 8 // 0.30*256, 0.59*256, 0.11*256
 
-			// Store Y, I, Q sequentially
-			yiqData[y*width + x] = int32(dY * 256) // Y component
-			yiqData[height*width + y*width + x] = int32(256 * (-0.27*(b-dY) + 0.74*(r-dY))) // I component
-			yiqData[2*height*width + y*width + x] = int32(256 * (0.41*(b-dY) + 0.48*(r-dY))) // Q component
+				yiqData[yRowStart + i] = dY
+				yiqData[iRowStart + i] = (189*(r-dY) - 69*(b-dY)) >> 8
+				yiqData[qRowStart + i] = (123*(r-dY) + 105*(b-dY)) >> 8
+			}
 		}
 	}
 
-	return &YIQImage{Data: yiqData, Width: width, Height: height}
+	return yiq
 }
 
 func (p *NtscProcessor) yiq2bgr(yiq *YIQImage, dst *image.Image, field int) {
 	height := yiq.Height
 	width := yiq.Width
+	dstData := dst.Data
 
-	dstData := dst.Data // Direct access to underlying []uint8
-
+	// Batch processing for better cache locality
+	batchSize := 8
 	for y := field; y < height; y += 2 {
-		for x := 0; x < width; x++ {
-			Y := float64(yiq.Data[y*width + x])
-			I := float64(yiq.Data[height*width + y*width + x])
-			Q := float64(yiq.Data[2*height*width + y*width + x])
+		rowStart := y * width
+		dstRowStart := rowStart * 3
+		yRowStart := rowStart
+		iRowStart := height*width + rowStart
+		qRowStart := 2*height*width + rowStart
+		
+		for x := 0; x < width; x += batchSize {
+			end := x + batchSize
+			if end > width {
+				end = width
+			}
+			
+			for i := x; i < end; i++ {
+				Y := yiq.Data[yRowStart + i]
+				I := yiq.Data[iRowStart + i]
+				Q := yiq.Data[qRowStart + i]
 
-			r := int32((1.000*Y + 0.956*I + 0.621*Q) / 256)
-			g := int32((1.000*Y + -0.272*I + -0.647*Q) / 256)
-			b := int32((1.000*Y + -1.106*I + 1.703*Q) / 256)
+				// Use integer arithmetic for better performance
+				r := Y + (245*I + 159*Q)>>8
+				g := Y - (70*I + 166*Q)>>8
+				b := Y + (-283*I + 436*Q)>>8
 
-			if r < 0 {
-				r = 0
-			}
-			if r > 255 {
-				r = 255
-			}
-			if g < 0 {
-				g = 0
-			}
-			if g > 255 {
-				g = 255
-			}
-			if b < 0 {
-				b = 0
-			}
-			if b > 255 {
-				b = 255
-			}
+				// Clamp values using branchless operations where possible
+				if r < 0 {
+					r = 0
+				} else if r > 255 {
+					r = 255
+				}
+				if g < 0 {
+					g = 0
+				} else if g > 255 {
+					g = 255
+				}
+				if b < 0 {
+					b = 0
+				} else if b > 255 {
+					b = 255
+				}
 
-			idx := (y*width + x) * 3
-			dstData[idx] = uint8(r)
-			dstData[idx+1] = uint8(g)
-			dstData[idx+2] = uint8(b)
+				dstIdx := dstRowStart + i*3
+				dstData[dstIdx] = uint8(r)
+				dstData[dstIdx+1] = uint8(g)
+				dstData[dstIdx+2] = uint8(b)
+			}
 		}
 	}
 }
@@ -325,71 +357,95 @@ func (p *NtscProcessor) compositeLayer(dst *image.Image, src *image.Image, yiq *
 	start := time.Now()
 	if p.Config.ColorBleedBefore && (p.Config.ColorBleedVert != 0 || p.Config.ColorBleedHoriz != 0) {
 		p.colorBleed(yiq, field)
-		fmt.Printf("DEBUG: colorBleed took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: colorBleed took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.CompositeInChromaLowpass {
 		p.compositeLowpass(yiq, field, fieldno)
-		fmt.Printf("DEBUG: compositeLowpass took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: compositeLowpass took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.Ringing != 1.0 {
 		p.ringing(yiq, field)
-		fmt.Printf("DEBUG: ringing took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: ringing took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	p.chromaIntoLuma(yiq, field, fieldno, p.Config.SubcarrierAmplitude)
-	fmt.Printf("DEBUG: chromaIntoLuma took %v\n", time.Since(start))
+	if debugMode {
+			fmt.Printf("DEBUG: chromaIntoLuma took %v\n", time.Since(start))
+		}
 
 	start = time.Now()
 	if p.Config.CompositePreemphasis != 0.0 && p.Config.CompositePreemphasisCut > 0 {
 		p.compositePreemphasis(yiq, field, p.Config.CompositePreemphasis, p.Config.CompositePreemphasisCut)
-		fmt.Printf("DEBUG: compositePreemphasis took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: compositePreemphasis took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.VideoNoise != 0 {
 		p.videoNoise(yiq, field, p.Config.VideoNoise)
-		fmt.Printf("DEBUG: videoNoise took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: videoNoise took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.VHSHeadSwitching {
 		p.vhsHeadSwitching(yiq, field)
-		fmt.Printf("DEBUG: vhsHeadSwitching took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: vhsHeadSwitching took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if !p.Config.NoColorSubcarrier {
 		p.chromaFromLuma(yiq, field, fieldno, p.Config.SubcarrierAmplitudeBack)
-		fmt.Printf("DEBUG: chromaFromLuma took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: chromaFromLuma took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.VideoChromaNoise != 0 {
 		p.videoChromaNoise(yiq, field, p.Config.VideoChromaNoise)
-		fmt.Printf("DEBUG: videoChromaNoise took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: videoChromaNoise took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.VideoChromaPhaseNoise != 0 {
 		p.videoChromaPhaseNoise(yiq, field, p.Config.VideoChromaPhaseNoise)
-		fmt.Printf("DEBUG: videoChromaPhaseNoise took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: videoChromaPhaseNoise took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.EmulatingVHS {
 		p.emulateVHS(yiq, field, fieldno)
-		fmt.Printf("DEBUG: emulateVHS took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: emulateVHS took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if p.Config.VideoChromaLoss != 0 {
 		p.vhsChromaLoss(yiq, field, p.Config.VideoChromaLoss)
-		fmt.Printf("DEBUG: vhsChromaLoss took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: vhsChromaLoss took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
@@ -399,22 +455,30 @@ func (p *NtscProcessor) compositeLayer(dst *image.Image, src *image.Image, yiq *
 		} else {
 			p.compositeLowpass(yiq, field, fieldno)
 		}
-		fmt.Printf("DEBUG: compositeOutChromaLowpass took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: compositeOutChromaLowpass took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	if !p.Config.ColorBleedBefore && (p.Config.ColorBleedVert != 0 || p.Config.ColorBleedHoriz != 0) {
 		p.colorBleed(yiq, field)
-		fmt.Printf("DEBUG: colorBleed (after) took %v\n", time.Since(start))
+		if debugMode {
+			fmt.Printf("DEBUG: colorBleed (after) took %v\n", time.Since(start))
+		}
 	}
 
 	start = time.Now()
 	p.blurChroma(yiq, field)
-	fmt.Printf("DEBUG: blurChroma took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: blurChroma took %v\n", time.Since(start))
+	}
 
 	start = time.Now()
 	p.yiq2bgr(yiq, dst, field)
-	fmt.Printf("DEBUG: yiq2bgr took %v\n", time.Since(start))
+	if debugMode {
+		fmt.Printf("DEBUG: yiq2bgr took %v\n", time.Since(start))
+	}
 }
 
 func (p *NtscProcessor) chromaLumaXi(fieldno, y int) int {
@@ -455,23 +519,44 @@ func (p *NtscProcessor) chromaIntoLuma(yiq *YIQImage, field, fieldno, subcarrier
 	}
 }
 
+// Pre-allocated buffers for chromaFromLuma to avoid repeated allocations
+type ChromaBuffers struct {
+	chroma []int32
+	y2     []int32
+	yd4    []int32
+	sums   []int32
+	sums0  []int32
+	acc    []int32
+	acc4   []int32
+	cxi    []int32
+	cxi1   []int32
+}
+
+func newChromaBuffers(width int) *ChromaBuffers {
+	return &ChromaBuffers{
+		chroma: make([]int32, width),
+		y2:     make([]int32, width),
+		yd4:    make([]int32, width),
+		sums:   make([]int32, width),
+		sums0:  make([]int32, width+1),
+		acc:    make([]int32, width),
+		acc4:   make([]int32, width),
+		cxi:    make([]int32, width/2+1),
+		cxi1:   make([]int32, width/2+1),
+	}
+}
+
 func (p *NtscProcessor) chromaFromLuma(yiq *YIQImage, field, fieldno, subcarrierAmplitude int) {
 	height := yiq.Height
 	width := yiq.Width
 
-	// Reuse temporary arrays to reduce allocations
-	chroma := make([]int32, width)
-	y2 := make([]int32, width)
-	yd4 := make([]int32, width)
-	sums := make([]int32, width)
-	sums0 := make([]int32, width+1)
-	acc := make([]int32, width)
-	acc4 := make([]int32, width)
-	cxi := make([]int32, width/2 + 1) // Max possible size
-	cxi1 := make([]int32, width/2 + 1) // Max possible size
+	// Use pre-allocated buffers
+	if p.chromaBuffers == nil || len(p.chromaBuffers.chroma) < width {
+		p.chromaBuffers = newChromaBuffers(width)
+	}
+	buf := p.chromaBuffers
 
 	for y := field; y < height; y += 2 {
-		// Access Y, I, Q components from flattened array
 		Y_row_start := y*width
 		I_row_start := height*width + y*width
 		Q_row_start := 2*height*width + y*width
@@ -479,38 +564,38 @@ func (p *NtscProcessor) chromaFromLuma(yiq *YIQImage, field, fieldno, subcarrier
 		sum := yiq.Data[Y_row_start] + yiq.Data[Y_row_start + 1]
 
 		for i := 0; i < width-2; i++ {
-			y2[i] = yiq.Data[Y_row_start + i + 2]
+			buf.y2[i] = yiq.Data[Y_row_start + i + 2]
 		}
 
 		for i := 2; i < width; i++ {
-			yd4[i] = yiq.Data[Y_row_start + i - 2]
+			buf.yd4[i] = yiq.Data[Y_row_start + i - 2]
 		}
 
 		for i := 0; i < width; i++ {
-			sums[i] = y2[i] - yd4[i]
+			buf.sums[i] = buf.y2[i] - buf.yd4[i]
 		}
 
-		sums0[0] = sum
+		buf.sums0[0] = sum
 		for i := 0; i < width; i++ {
-			sums0[i+1] = sums[i]
+			buf.sums0[i+1] = buf.sums[i]
 		}
 
-		accumulator := sums0[0]
+		accumulator := buf.sums0[0]
 		for i := 0; i < width; i++ {
-			accumulator += sums0[i+1]
-			acc[i] = accumulator
-		}
-
-		for i := 0; i < width; i++ {
-			acc4[i] = acc[i] / 4
+			accumulator += buf.sums0[i+1]
+			buf.acc[i] = accumulator
 		}
 
 		for i := 0; i < width; i++ {
-			chroma[i] = y2[i] - acc4[i]
+			buf.acc4[i] = buf.acc[i] / 4
 		}
 
 		for i := 0; i < width; i++ {
-			yiq.Data[Y_row_start + i] = acc4[i]
+			buf.chroma[i] = buf.y2[i] - buf.acc4[i]
+		}
+
+		for i := 0; i < width; i++ {
+			yiq.Data[Y_row_start + i] = buf.acc4[i]
 		}
 
 		xi := p.chromaLumaXi(fieldno, y)
@@ -518,25 +603,25 @@ func (p *NtscProcessor) chromaFromLuma(yiq *YIQImage, field, fieldno, subcarrier
 		x := (4 - xi) & 3
 
 		for i := x + 2; i < width; i += 4 {
-			chroma[i] = -chroma[i]
+			buf.chroma[i] = -buf.chroma[i]
 		}
 		for i := x + 3; i < width; i += 4 {
-			chroma[i] = -chroma[i]
+			buf.chroma[i] = -buf.chroma[i]
 		}
 
 		for i := 0; i < width; i++ {
-			chroma[i] = chroma[i] * 50 / int32(subcarrierAmplitude)
+			buf.chroma[i] = buf.chroma[i] * 50 / int32(subcarrierAmplitude)
 		}
 
 		cxiCount := 0
 		for i := xi; i < width; i += 2 {
-			cxi[cxiCount] = -chroma[i]
+			buf.cxi[cxiCount] = -buf.chroma[i]
 			cxiCount++
 		}
 
 		cxi1Count := 0
 		for i := xi + 1; i < width; i += 2 {
-			cxi1[cxi1Count] = -chroma[i]
+			buf.cxi1[cxi1Count] = -buf.chroma[i]
 			cxi1Count++
 		}
 
@@ -546,11 +631,11 @@ func (p *NtscProcessor) chromaFromLuma(yiq *YIQImage, field, fieldno, subcarrier
 		}
 
 		for i := 0; i < cxiCount && i*2 < width; i++ {
-			yiq.Data[I_row_start + i*2] = cxi[i]
+			yiq.Data[I_row_start + i*2] = buf.cxi[i]
 		}
 
 		for i := 0; i < cxi1Count && i*2 < width; i++ {
-			yiq.Data[Q_row_start + i*2] = cxi1[i]
+			yiq.Data[Q_row_start + i*2] = buf.cxi1[i]
 		}
 
 		for x := 1; x < width-2; x += 2 {
@@ -572,6 +657,12 @@ func (p *NtscProcessor) compositeLowpass(yiq *YIQImage, field, fieldno int) {
 	height := yiq.Height
 	width := yiq.Width
 
+	// Pre-allocate samples buffer
+	if p.samplesBuffer == nil || len(p.samplesBuffer) < width {
+		p.samplesBuffer = make([]float64, width)
+	}
+	samples := p.samplesBuffer[:width]
+
 	for comp := 1; comp < 3; comp++ {
 		cutoff := 1300000.0
 		delay := 2
@@ -582,9 +673,9 @@ func (p *NtscProcessor) compositeLowpass(yiq *YIQImage, field, fieldno int) {
 
 		lp := LowpassFilters(cutoff, 0.0, NTSC_RATE)
 		for y := field; y < height; y += 2 {
-			samples := make([]float64, width)
+			rowStart := comp*height*width + y*width
 			for x := 0; x < width; x++ {
-				samples[x] = float64(yiq.Data[comp*height*width + y*width + x])
+				samples[x] = float64(yiq.Data[rowStart + x])
 			}
 
 			f := lp[0].LowpassArray(samples)
@@ -592,7 +683,7 @@ func (p *NtscProcessor) compositeLowpass(yiq *YIQImage, field, fieldno int) {
 			f = lp[2].LowpassArray(f)
 
 			for x := 0; x < width-delay; x++ {
-				yiq.Data[comp*height*width + y*width + x] = int32(f[x+delay])
+				yiq.Data[rowStart + x] = int32(f[x+delay])
 			}
 		}
 	}
@@ -602,14 +693,19 @@ func (p *NtscProcessor) compositeLowpassTV(yiq *YIQImage, field, fieldno int) {
 	height := yiq.Height
 	width := yiq.Width
 
+	if p.samplesBuffer == nil || len(p.samplesBuffer) < width {
+		p.samplesBuffer = make([]float64, width)
+	}
+	samples := p.samplesBuffer[:width]
+
 	for comp := 1; comp < 3; comp++ {
 		delay := 1
 		lp := LowpassFilters(2600000.0, 0.0, NTSC_RATE)
 
 		for y := field; y < height; y += 2 {
-			samples := make([]float64, width)
+			rowStart := comp*height*width + y*width
 			for x := 0; x < width; x++ {
-				samples[x] = float64(yiq.Data[comp*height*width + y*width + x])
+				samples[x] = float64(yiq.Data[rowStart + x])
 			}
 
 			f := lp[0].LowpassArray(samples)
@@ -617,7 +713,7 @@ func (p *NtscProcessor) compositeLowpassTV(yiq *YIQImage, field, fieldno int) {
 			f = lp[2].LowpassArray(f)
 
 			for x := 0; x < width-delay; x++ {
-				yiq.Data[comp*height*width + y*width + x] = int32(f[x+delay])
+				yiq.Data[rowStart + x] = int32(f[x+delay])
 			}
 		}
 	}
@@ -627,18 +723,23 @@ func (p *NtscProcessor) compositePreemphasis(yiq *YIQImage, field int, composite
 	height := yiq.Height
 	width := yiq.Width
 
+	if p.samplesBuffer == nil || len(p.samplesBuffer) < width {
+		p.samplesBuffer = make([]float64, width)
+	}
+	samples := p.samplesBuffer[:width]
+
 	for y := field; y < height; y += 2 {
 		pre := NewLowpassFilter(NTSC_RATE, compositePreemphasisCut, 16.0)
+		rowStart := y*width
 
-		samples := make([]float64, width)
 		for x := 0; x < width; x++ {
-			samples[x] = float64(yiq.Data[y*width + x])
+			samples[x] = float64(yiq.Data[rowStart + x])
 		}
 
 		highpass := pre.HighpassArray(samples)
 		for x := 0; x < width; x++ {
 			filtered := samples[x] + highpass[x]*compositePreemphasis
-			yiq.Data[y*width + x] = int32(filtered)
+			yiq.Data[rowStart + x] = int32(filtered)
 		}
 	}
 }
@@ -1008,10 +1109,11 @@ func (p *NtscProcessor) ringing(yiq *YIQImage, field int) {
 
 	if !p.Config.EnableRinging2 {
 
+		original := pool.DefaultSlicePool.GetInt32(width)
+		defer pool.DefaultSlicePool.PutInt32(original)
+		
 		for comp := 0; comp < 3; comp++ {
 			for y := field; y < height; y += 2 {
-
-				original := make([]int32, width)
 				// Copy data for the current component and row
 				copy(original, yiq.Data[comp*height*width + y*width : comp*height*width + (y+1)*width])
 
@@ -1040,7 +1142,8 @@ func (p *NtscProcessor) ringingFreqDomain(img []int32, alpha, noiseSize, noiseVa
 		return
 	}
 
-	samples := make([]float64, width)
+	samples := pool.DefaultSlicePool.GetFloat64(width)
+	defer pool.DefaultSlicePool.PutFloat64(samples)
 	for i := 0; i < width; i++ {
 		samples[i] = float64(img[i])
 	}
@@ -1052,7 +1155,9 @@ func (p *NtscProcessor) ringingFreqDomain(img []int32, alpha, noiseSize, noiseVa
 
 	start := time.Now()
 	complexData = fft(complexData)
-	fmt.Printf("DEBUG: ringingFreqDomain FFT took %v\n", time.Since(start))
+	if debugMode {
+			fmt.Printf("DEBUG: ringingFreqDomain FFT took %v\n", time.Since(start))
+		}
 
 	complexData = fftShift(complexData)
 
@@ -1091,7 +1196,9 @@ func (p *NtscProcessor) ringingFreqDomain(img []int32, alpha, noiseSize, noiseVa
 
 	start = time.Now()
 	complexData = ifft(complexData)
-	fmt.Printf("DEBUG: ringingFreqDomain IFFT took %v\n", time.Since(start))
+	if debugMode {
+			fmt.Printf("DEBUG: ringingFreqDomain IFFT took %v\n", time.Since(start))
+		}
 
 	minVal := samples[0]
 	maxVal := samples[0]
@@ -1131,7 +1238,9 @@ func (p *NtscProcessor) ringing2(img []int32, power int, shift float64) {
 
 	startFFT := time.Now()
 	complexData = fft(complexData)
-	fmt.Printf("DEBUG: ringing2 FFT took %v\n", time.Since(startFFT))
+	if debugMode {
+			fmt.Printf("DEBUG: ringing2 FFT took %v\n", time.Since(startFFT))
+		}
 
 	complexData = fftShift(complexData)
 
@@ -1170,7 +1279,9 @@ func (p *NtscProcessor) ringing2(img []int32, power int, shift float64) {
 
 	startIFFT := time.Now()
 	complexData = ifft(complexData)
-	fmt.Printf("DEBUG: ringing2 IFFT took %v\n", time.Since(startIFFT))
+	if debugMode {
+			fmt.Printf("DEBUG: ringing2 IFFT took %v\n", time.Since(startIFFT))
+		}
 
 	for i := 0; i < width; i++ {
 		img[i] = int32(real(complexData[i]))

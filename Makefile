@@ -45,7 +45,7 @@ $(WASM_EXEC_JS):
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f $(WASM_OUTPUT) $(WASM_EXEC_JS)
+	@rm -rf $(DIST_DIR)
 
 # Help
 .PHONY: help

@@ -56,6 +56,18 @@ func (img *Image) Clone() *Image {
 	return newImg
 }
 
+// CloneWithPool creates a copy using object pool for better performance
+func (img *Image) CloneWithPool(pool interface{}) *Image {
+	if imagePool, ok := pool.(interface {
+		Get(int, int) *Image
+	}); ok {
+		newImg := imagePool.Get(img.Width, img.Height)
+		copy(newImg.Data, img.Data)
+		return newImg
+	}
+	return img.Clone()
+}
+
 func BGRToYIQ(pixel Pixel) YIQPixel {
 	r, g, b := float64(pixel.R)/255.0, float64(pixel.G)/255.0, float64(pixel.B)/255.0
 	y := 0.299*r + 0.587*g + 0.114*b
@@ -107,18 +119,18 @@ func FromGoImage(src image.Image) *Image {
 
 	srcRGBA, ok := src.(*image.RGBA)
 	if !ok {
-		// Convert to RGBA if not already
 		srcRGBA = image.NewRGBA(bounds)
 		draw.Draw(srcRGBA, bounds, src, bounds.Min, draw.Src)
 	}
 
-	// Directly copy pixel data
+	// Optimized batch copy with stride calculation
+	stride := srcRGBA.Stride
 	for y := 0; y < height; y++ {
+		srcRowStart := y * stride
+		dstRowStart := y * width * 3
 		for x := 0; x < width; x++ {
-			// RGBA stores as R, G, B, A
-			// Our Image stores as R, G, B
-			srcIdx := srcRGBA.PixOffset(x, y)
-			dstIdx := (y*width + x) * 3
+			srcIdx := srcRowStart + x*4
+			dstIdx := dstRowStart + x*3
 			img.Data[dstIdx] = srcRGBA.Pix[srcIdx]
 			img.Data[dstIdx+1] = srcRGBA.Pix[srcIdx+1]
 			img.Data[dstIdx+2] = srcRGBA.Pix[srcIdx+2]
@@ -130,15 +142,18 @@ func FromGoImage(src image.Image) *Image {
 func (img *Image) ToGoImage() image.Image {
 	goImg := image.NewRGBA(image.Rect(0, 0, img.Width, img.Height))
 
-	// Directly copy pixel data
+	// Optimized batch copy with stride calculation
+	stride := goImg.Stride
 	for y := 0; y < img.Height; y++ {
+		srcRowStart := y * img.Width * 3
+		dstRowStart := y * stride
 		for x := 0; x < img.Width; x++ {
-			srcIdx := (y*img.Width + x) * 3
-			dstIdx := goImg.PixOffset(x, y)
+			srcIdx := srcRowStart + x*3
+			dstIdx := dstRowStart + x*4
 			goImg.Pix[dstIdx] = img.Data[srcIdx]
 			goImg.Pix[dstIdx+1] = img.Data[srcIdx+1]
 			goImg.Pix[dstIdx+2] = img.Data[srcIdx+2]
-			goImg.Pix[dstIdx+3] = 255 // Alpha channel
+			goImg.Pix[dstIdx+3] = 255
 		}
 	}
 	return goImg
