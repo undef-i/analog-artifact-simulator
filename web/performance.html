@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>NTSC WASM Performance Bottleneck Analyzer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 10px;
+        }
+        textarea {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>NTSC WASM Performance Bottleneck Analyzer</h1>
+    <p>Identify specific performance bottlenecks in NTSC processing pipeline</p>
+    <div id="wasmStatus">Loading WebAssembly module...</div>
+
+    <fieldset>
+        <legend>Test Image Setup</legend>
+        <label>Upload Image:</label>
+        <input type="file" id="fileInput" accept="image/*">
+        <br><br>
+        <label>Generate Test Image:</label>
+        <button onclick="generateTestImage(320, 240)">320x240</button>
+        <button onclick="generateTestImage(640, 480)">640x480</button>
+        <button onclick="generateTestImage(1280, 720)">1280x720</button>
+        <button onclick="generateTestImage(1920, 1080)">1920x1080</button>
+        <br><br>
+        <img id="testImage" width="300" height="200" style="display: none;">
+    </fieldset>
+
+    <fieldset>
+        <legend>Pipeline Component Analysis</legend>
+        <p>Test individual components to identify bottlenecks:</p>
+        <button onclick="runComponentTest('colorspace')" id="btnColorspace">Color Space Conversion</button>
+        <button onclick="runComponentTest('filtering')" id="btnFiltering">Signal Filtering</button>
+        <button onclick="runComponentTest('composite')" id="btnComposite">Composite Encoding</button>
+        <button onclick="runComponentTest('noise')" id="btnNoise">Noise Generation</button>
+        <button onclick="runComponentTest('decode')" id="btnDecode">Composite Decoding</button>
+        <button onclick="runAllComponentTests()" id="btnAllComponents">Run All Components</button>
+        <button onclick="clearResults('componentResults')">Clear Results</button>
+        <br><br>
+
+        <br>
+        <textarea id="componentResults" rows="15" placeholder="Component analysis results will appear here..."></textarea>
+    </fieldset>
+
+    <fieldset>
+        <legend>Resolution Scaling Analysis</legend>
+        <p>Analyze performance scaling with different resolutions:</p>
+        <button onclick="runScalingTest()" id="btnScaling">Resolution Scaling Test</button>
+        <button onclick="clearResults('scalingResults')">Clear Results</button>
+        <br><br>
+
+        <br>
+        <textarea id="scalingResults" rows="10"placeholder="Scaling analysis results will appear here..."></textarea>
+    </fieldset>
+
+    <fieldset>
+        <legend>Memory Efficiency Analysis</legend>
+        <p>Analyze memory usage patterns and efficiency:</p>
+        <button onclick="runMemoryEfficiencyTest()" id="btnMemoryEff">Memory Efficiency Test</button>
+        <button onclick="clearResults('memoryResults')">Clear Results</button>
+        <br><br>
+
+        <br>
+        <textarea id="memoryResults" rows="10" placeholder="Memory efficiency results will appear here..."></textarea>
+    </fieldset>
+
+    <fieldset>
+        <legend>Data Collection</legend>
+        <button onclick="collectAllData()" id="btnDataCollection">Collect All Performance Data</button>
+        <button onclick="exportResults()">Export All Results</button>
+        <button onclick="clearResults('dataCollection')">Clear Data</button>
+        <br><br>
+        <textarea id="dataCollection" rows="15" placeholder="Performance data collection will appear here..."></textarea>
+    </fieldset>
+
+    <script src="performance.js"></script>
+</body>
+</html>

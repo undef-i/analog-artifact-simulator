@@ -47,7 +47,9 @@
 <body>
     <h1>ntsc-wasm</h1>
 
-    <p>A comprehensive analog video artifact simulator that accurately reproduces classic video imperfections including dot crawl patterns, signal ringing, chroma noise distortion, color bleeding effects, and authentic VHS-style degradation.
+    <p>A comprehensive analog video artifact simulator that accurately reproduces classic video imperfections including
+        dot crawl patterns, signal ringing, chroma noise distortion, color bleeding effects, and authentic VHS-style
+        degradation.
     </p>
 
     <p><em>This implementation is inspired by the <a href="https://ntsc.rs" target="_blank">ntsc-rs</a> project.</em>
@@ -56,8 +58,45 @@
 
     <div id="wasmStatus">Loading WebAssembly module...</div>
 
-    <h3>Select Image</h3>
-    <input type="file" id="fileInput" accept="image/*">
+    <h3>Select Media</h3>
+    <div class="media-input-section">
+        <div class="input-group">
+            <label>Image:</label>
+            <input type="file" id="fileInput" accept="image/*">
+        </div>
+        <div class="input-group">
+            <label>Video:</label>
+            <input type="file" id="videoInput" accept="video/*">
+        </div>
+    </div>
+
+    <div id="videoControls" style="display: none;">
+        <h4>Video Processing</h4>
+        <div class="video-control-group">
+            <div class="control-item">
+                <label>Frame Rate (fps):</label>
+                <input type="number" id="videoFrameRate" min="1" max="60" value="30">
+            </div>
+            <div class="control-item">
+                <label>Max Width:</label>
+                <input type="number" id="videoMaxWidth" min="100" max="1920" value="640" placeholder="Auto">
+            </div>
+            <div class="control-item">
+                <label>Max Height:</label>
+                <input type="number" id="videoMaxHeight" min="100" max="1080" value="480" placeholder="Auto">
+            </div>
+            <div class="control-item">
+                <button id="processVideoBtn" onclick="processVideo()">Process Video</button>
+                <button id="stopVideoBtn" onclick="stopVideoProcessing()" style="display: none;">Stop</button>
+            </div>
+            <div class="control-item">
+                <div id="videoProgress" style="display: none;">
+                    <progress id="videoProgressBar" value="0" max="100"></progress>
+                    <span id="videoProgressText">0%</span>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <h3>Presets</h3>
     <button onclick="loadPreset('default')">Default</button>
@@ -65,8 +104,9 @@
     <button onclick="loadPreset('vhs')">VHS</button>
     <button onclick="loadPreset('broadcast')">Broadcast</button>
     <button onclick="loadPreset('vanilla')">Vanilla</button>
+    <button onclick="loadPreset('random')">Random</button>
     <h3>Controls</h3>
-    
+
     <!-- Composite Signal Controls -->
     <details open>
         <summary><strong>Composite Signal</strong></summary>
@@ -78,7 +118,8 @@
             </div>
             <div class="control-item">
                 <label>Preemphasis Cut Frequency:</label>
-                <input type="range" id="compositePreemphasisCut" min="100000" max="2000000" step="10000" value="1000000">
+                <input type="range" id="compositePreemphasisCut" min="100000" max="2000000" step="10000"
+                    value="1000000">
                 <span id="compositePreemphasisCutValue">1000000</span>
             </div>
             <div class="control-item">
@@ -294,333 +335,26 @@
             </div>
         </div>
     </div>
+
+    <div id="videoDisplay" style="display: none;">
+        <h3>Video Preview</h3>
+
+        <div class="image-container">
+            <div class="image-section">
+                <h3>Original</h3>
+                <video id="originalVideo" controls style="width: 100%; border: 1px solid #ccc;"></video>
+            </div>
+            <div class="image-section" <h3>Processed</h3>
+                <video id="processedVideo" controls style="width: 100%; border: 1px solid #ccc;"></video>
+            </div>
+        </div>
+    </div>
     <div id="processStatus" style="display: none;">Processing image...</div>
     <div id="tech-overview" class="section">
         <!-- Technical implementation content will be inserted here during build -->
     </div>
 
-    <script>
-        let wasmWorker = null;
-        let wasmReady = false;
-        let currentImageData = null;
-        let currentRequestId = 0;
-        let processingRequestId = null;
-
-        // Initialize Web Worker
-        function initWorker() {
-            wasmWorker = new Worker('worker.js');
-
-            wasmWorker.onmessage = function (event) {
-                const data = event.data;
-                if (data.type === 'wasmLoaded') {
-                    wasmReady = true;
-                    document.getElementById('wasmStatus').textContent = 'Ready to process images!';
-                    
-                    // Initialize debug mode based on checkbox state
-                    const debugEnabled = document.getElementById('enableDebugLog').checked;
-                    wasmWorker.postMessage({ type: 'setDebugMode', enabled: debugEnabled });
-
-                    if (currentImageData) { 
-                        processImage();
-                    }
-                } else if (data.type === 'result') {
-                    if (data.requestId && data.requestId !== processingRequestId) {
-                        return;
-                    }
-                    const processedImage = document.getElementById('processedImage');
-                    processedImage.src = data.imageData;
-                    document.getElementById('processStatus').style.display = 'none';
-                    document.getElementById('processStatus').textContent = 'Processing time: ' + data.processTime + ' ms';
-                    document.getElementById('processStatus').style.display = 'block';
-                    processingRequestId = null;
-                } else if (data.type === 'error') {
-                    if (data.requestId && data.requestId !== processingRequestId) {
-                        return;
-                    }
-                    showError(data.message);
-                    document.getElementById('processStatus').style.display = 'none';
-                    processingRequestId = null;
-
-                }
-            };
-
-            wasmWorker.onerror = function (error) {
-                console.error('Worker error:', error);
-                showError('Web Worker encountered an error.');
-                document.getElementById('wasmStatus').textContent = 'Failed to load WebAssembly module';
-                document.getElementById('loading').style.display = 'none';
-
-            };
-        }
-
-        initWorker(); // Call to initialize the worker
-
-        document.getElementById('fileInput').addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
-            }
-        });
-
-        function handleFile(file) {
-            if (!file.type.startsWith('image/')) {
-                showError('Please select an image file');
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                currentImageData = e.target.result;
-                document.getElementById('originalImage').src = currentImageData;
-                document.getElementById('imageDisplay').style.display = 'block';
-
-                if (wasmReady) {
-                    processImage();
-                }
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function updateSliderValues() {
-            const sliders = document.querySelectorAll('input[type="range"]');
-            sliders.forEach(slider => {
-                const valueElement = document.getElementById(slider.id + 'Value');
-                if (valueElement) {
-                    valueElement.textContent = slider.value;
-                    slider.addEventListener('input', () => {
-                        valueElement.textContent = slider.value;
-                        if (currentImageData && wasmReady) {
-                            processImage();
-                        }
-                    });
-                }
-            });
-            
-            // Add listeners for checkboxes
-            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-            checkboxes.forEach(checkbox => {
-                if (checkbox.id === 'enableDebugLog') {
-                    // Special handling for debug log checkbox
-                    checkbox.addEventListener('change', () => {
-                        if (wasmReady) {
-                            wasmWorker.postMessage({ type: 'setDebugMode', enabled: checkbox.checked });
-                        }
-                    });
-                } else {
-                    checkbox.addEventListener('change', () => {
-                        if (currentImageData && wasmReady) {
-                            processImage();
-                        }
-                    });
-                }
-            });
-        }
-
-        function loadPreset(presetName) {
-            if (!wasmReady) {
-                showError('WebAssembly module not ready');
-                return;
-            }
-
-            // Send message to worker to get preset config
-            wasmWorker.postMessage({ type: 'getPreset', presetName: presetName });
-
-            wasmWorker.onmessage = function (event) {
-                const data = event.data;
-                if (data.type === 'presetConfig') {
-                    const config = JSON.parse(data.config);
-                    document.getElementById('compositePreemphasis').value = config.CompositePreemphasis || 0;
-                    document.getElementById('colorBleedHoriz').value = config.ColorBleedHoriz || 0;
-                    document.getElementById('ringing').value = config.Ringing || 0;
-                    document.getElementById('videoNoise').value = config.VideoNoise || 0;
-                    document.getElementById('videoChromaNoise').value = config.VideoChromaNoise || 0;
-                    document.getElementById('vhsOutSharpen').value = config.VHSOutSharpen || 0;
-                    document.getElementById('vhsChromaVertBlend').checked = config.VHSChromaVertBlend || false;
-                    document.getElementById('headSwitchingSpeed').value = config.HeadSwitchingSpeed || 0;
-                    document.getElementById('blackLineCut').checked = config.BlackLineCut || false;
-                    document.getElementById('precise').checked = config.Precise || false;
-                    updateSliderValues();
-                } else if (data.type === 'error') {
-                    showError(data.message);
-                }
-                // Re-attach the main onmessage handler after preset is loaded
-                initWorker();
-            };
-        }
-
-        async function processImage() {
-            if (!wasmReady) {
-                showError('WebAssembly module not ready');
-                return;
-            }
-
-            if (!currentImageData) {
-                showError('Please upload an image first');
-                return;
-            }
-
-            // Generate new request ID and cancel any previous processing
-            currentRequestId++;
-            const requestId = currentRequestId;
-            processingRequestId = requestId;
-
-            const processStatus = document.getElementById('processStatus');
-            const errorDiv = document.getElementById('error');
-            processStatus.style.display = 'block';
-            processStatus.textContent = 'Processing image...';
-            errorDiv.style.display = 'none';
-
-            const config = {
-                CompositePreemphasis: parseFloat(document.getElementById('compositePreemphasis').value),
-                CompositePreemphasisCut: parseFloat(document.getElementById('compositePreemphasisCut').value),
-                ColorBleedBefore: document.getElementById('colorBleedBefore').checked,
-                ColorBleedHoriz: parseInt(document.getElementById('colorBleedHoriz').value),
-                ColorBleedVert: parseInt(document.getElementById('colorBleedVert').value),
-                Ringing: parseFloat(document.getElementById('ringing').value),
-                EnableRinging2: document.getElementById('enableRinging2').checked,
-                RingingPower: parseInt(document.getElementById('ringingPower').value),
-                RingingShift: parseInt(document.getElementById('ringingShift').value),
-                FreqNoiseSize: parseFloat(document.getElementById('freqNoiseSize').value),
-                FreqNoiseAmplitude: parseFloat(document.getElementById('freqNoiseAmplitude').value),
-                CompositeInChromaLowpass: document.getElementById('compositeInChromaLowpass').checked,
-                CompositeOutChromaLowpass: document.getElementById('compositeOutChromaLowpass').checked,
-                CompositeOutChromaLowpassLite: document.getElementById('compositeOutChromaLowpassLite').checked,
-                VideoNoise: parseInt(document.getElementById('videoNoise').value),
-                VideoChromaNoise: parseInt(document.getElementById('videoChromaNoise').value),
-                VideoChromaPhaseNoise: parseInt(document.getElementById('videoChromaPhaseNoise').value),
-                VideoChromaLoss: parseInt(document.getElementById('videoChromaLoss').value),
-                SubcarrierAmplitude: parseInt(document.getElementById('subcarrierAmplitude').value),
-                SubcarrierAmplitudeBack: parseInt(document.getElementById('subcarrierAmplitude').value),
-                EmulatingVHS: document.getElementById('emulatingVHS').checked,
-                NoColorSubcarrier: document.getElementById('noColorSubcarrier').checked,
-                VHSChromaVertBlend: document.getElementById('vhsChromaVertBlend').checked,
-                VHSSVideoOut: document.getElementById('vhsSVideoOut').checked,
-                VHSOutSharpen: parseFloat(document.getElementById('vhsOutSharpen').value),
-                VHSEdgeWave: parseInt(document.getElementById('vhsEdgeWave').value),
-                VHSHeadSwitching: document.getElementById('vhsHeadSwitching').checked,
-                VHSHeadSwitchingPhaseNoise: 0.05,
-                OutputNTSC: document.getElementById('outputNTSC').checked,
-                VideoScanlinePhaseShift: parseInt(document.getElementById('videoScanlinePhaseShift').value),
-                VideoScanlinePhaseShiftOffset: parseInt(document.getElementById('videoScanlinePhaseShiftOffset').value),
-                OutputVHSTapeSpeed: parseInt(document.getElementById('outputVHSTapeSpeed').value),
-                HeadSwitchingSpeed: parseInt(document.getElementById('headSwitchingSpeed').value),
-                BlackLineCut: document.getElementById('blackLineCut').checked,
-                Precise: document.getElementById('precise').checked,
-                RandomSeed: parseInt(document.getElementById('randomSeed').value),
-                RandomSeed2: parseInt(document.getElementById('randomSeed2').value)
-            };
-
-            const enableCompression = document.getElementById('enableCompression').checked;
-            const maxWidth = enableCompression ? parseInt(document.getElementById('maxWidth').value) || 0 : 0;
-            const maxHeight = enableCompression ? parseInt(document.getElementById('maxHeight').value) || 0 : 0;
-
-            let imageDataToSend = currentImageData;
-
-            if (enableCompression && (maxWidth > 0 || maxHeight > 0)) {
-                try {
-                    imageDataToSend = await resizeImage(currentImageData, maxWidth, maxHeight);
-                } catch (error) {
-                    if (requestId === currentRequestId) {
-                        showError('Failed to resize image: ' + error.message);
-                        processStatus.style.display = 'none';
-                    }
-                    return;
-                }
-            }
-
-            // Check if this request is still current before sending
-            if (requestId !== currentRequestId) {
-                return;
-            }
-
-            const request = {
-                imageData: imageDataToSend,
-                config: config,
-                maxWidth: maxWidth,
-                maxHeight: maxHeight,
-                requestId: requestId
-            };
-
-            // Send message to worker to process image
-            wasmWorker.postMessage({ type: 'processImage', request: request });
-        }
-
-        async function resizeImage(base64Data, maxWidth, maxHeight) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    let width = img.width;
-                    let height = img.height;
-
-                    if (maxWidth > 0 && width > maxWidth) {
-                        height = height * (maxWidth / width);
-                        width = maxWidth;
-                    }
-
-                    if (maxHeight > 0 && height > maxHeight) {
-                        width = width * (maxHeight / height);
-                        height = maxHeight;
-                    }
-
-                    canvas.width = width;
-                    canvas.height = height;
-
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-
-                    resolve(canvas.toDataURL('image/png')); // Always convert to PNG for consistency
-                };
-                img.onerror = (error) => {
-                    reject(error);
-                };
-                img.src = base64Data;
-            });
-        }
-
-        function showError(message) {
-            const errorDiv = document.getElementById('error');
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
-        }
-
-        function toggleCompressionSettings() {
-            const enableCompression = document.getElementById('enableCompression');
-            const compressionSettings = document.getElementById('compressionSettings');
-
-            compressionSettings.style.display = enableCompression.checked ? 'block' : 'none';
-        }
-
-        document.getElementById('enableCompression').addEventListener('change', toggleCompressionSettings);
-
-        updateSliderValues();
-        toggleCompressionSettings();
-
-        // Add real-time listeners for number inputs
-        const numberInputs = document.querySelectorAll('input[type="number"]');
-        numberInputs.forEach(input => {
-            input.addEventListener('input', () => {
-                if (currentImageData && wasmReady) {
-                    processImage();
-                }
-            });
-        });
-
-        // Add real-time listener for compression checkbox
-        document.getElementById('enableCompression').addEventListener('change', () => {
-            if (currentImageData && wasmReady) {
-                processImage();
-            }
-        });
-
-        document.addEventListener("DOMContentLoaded", function () {
-            renderMathInElement(document.body, {
-                delimiters: [
-                    { left: '\\(', right: '\\)', display: false },
-                    { left: '\\[', right: '\\]', display: true }
-                ]
-            });
-        });
-    </script>
+    <script src="index.js"></script>
 </body>
 
 </html>

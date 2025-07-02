@@ -26,6 +26,16 @@ type ProcessRequest struct {
 	MaxHeight int              `json:"maxHeight,omitempty"`
 }
 
+type VideoProcessRequest struct {
+	ImageData   string           `json:"imageData"`
+	Config      *ntsc.NtscConfig `json:"config"`
+	MaxWidth    int              `json:"maxWidth,omitempty"`
+	MaxHeight   int              `json:"maxHeight,omitempty"`
+	FrameNumber int              `json:"frameNumber"`
+	TotalFrames int              `json:"totalFrames,omitempty"`
+	Timestamp   float64          `json:"timestamp,omitempty"`
+}
+
 type ProcessResponse struct {
 	ImageData string `json:"imageData"`
 	Error     string `json:"error,omitempty"`
@@ -35,6 +45,7 @@ func main() {
 	c := make(chan struct{}, 0)
 
 	js.Global().Set("processNTSC", js.FuncOf(processNTSC))
+	js.Global().Set("processVideoFrame", js.FuncOf(processVideoFrame))
 	js.Global().Set("getPreset", js.FuncOf(getPreset))
 	js.Global().Set("setDebugMode", js.FuncOf(setDebugMode))
 	js.Global().Set("getDebugMode", js.FuncOf(getDebugMode))
@@ -156,6 +167,129 @@ func processNTSC(this js.Value, args []js.Value) interface{} {
 	}
 	return map[string]interface{}{
 		"imageData": "data:image/png;base64," + resultData,
+	}
+}
+
+func processVideoFrame(this js.Value, args []js.Value) interface{} {
+	startTotal := time.Now()
+
+	if len(args) != 1 {
+		return map[string]interface{}{
+			"error": "Invalid number of arguments",
+		}
+	}
+
+	reqJSON := args[0].String()
+	var req VideoProcessRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("Failed to parse request: %v", err),
+		}
+	}
+
+	if req.Config == nil {
+		req.Config = ntsc.DefaultNtscConfig()
+	}
+
+	// Update random seeds based on frame number for consistent video effects
+	if req.FrameNumber > 0 {
+		req.Config.RandomSeed = req.Config.RandomSeed + uint32(req.FrameNumber)
+		req.Config.RandomSeed2 = req.Config.RandomSeed2 + uint32(req.FrameNumber*2)
+	}
+
+	// Decode image data
+	start := time.Now()
+	imageData, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(req.ImageData, "data:image/png;base64,"))
+	if err != nil {
+		imageData, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(req.ImageData, "data:image/jpeg;base64,"))
+		if err != nil {
+			return map[string]interface{}{
+				"error": fmt.Sprintf("Failed to decode image data: %v", err),
+			}
+		}
+	}
+	if debugMode {
+		fmt.Printf("DEBUG: Base64 decode took %v\n", time.Since(start))
+	}
+
+	// Decode image
+	start = time.Now()
+	var img image.Image
+	if strings.Contains(req.ImageData, "data:image/png") {
+		img, err = png.Decode(bytes.NewReader(imageData))
+	} else {
+		img, err = jpeg.Decode(bytes.NewReader(imageData))
+	}
+	if err != nil {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("Failed to decode image: %v", err),
+		}
+	}
+	if debugMode {
+		fmt.Printf("DEBUG: Image decode took %v\n", time.Since(start))
+	}
+
+	// Convert to ntscImage
+	start = time.Now()
+	ntscImg := ntscImage.FromGoImage(img)
+	if debugMode {
+		fmt.Printf("DEBUG: FromGoImage took %v\n", time.Since(start))
+	}
+
+	maxWidth := req.MaxWidth
+	maxHeight := req.MaxHeight
+
+	// Resize image
+	if maxWidth > 0 || maxHeight > 0 {
+		start = time.Now()
+		ntscImg = ntscImg.Resize(maxWidth, maxHeight)
+		if debugMode {
+			fmt.Printf("DEBUG: Resize took %v\n", time.Since(start))
+		}
+	}
+
+	processor := ntsc.NewNtscProcessor(req.Config)
+
+	// Process image with video context
+	start = time.Now()
+	processedImg := processor.ProcessImage(ntscImg)
+	if debugMode {
+		fmt.Printf("DEBUG: ProcessImage took %v\n", time.Since(start))
+	}
+
+	// Convert back to Go image
+	start = time.Now()
+	resultImg := processedImg.ToGoImage()
+	if debugMode {
+		fmt.Printf("DEBUG: ToGoImage took %v\n", time.Since(start))
+	}
+
+	// Encode result image
+	start = time.Now()
+	var buf bytes.Buffer
+	encoder := png.Encoder{CompressionLevel: png.NoCompression}
+	if err := encoder.Encode(&buf, resultImg); err != nil {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("Failed to encode result image: %v", err),
+		}
+	}
+	if debugMode {
+		fmt.Printf("DEBUG: Image encode took %v\n", time.Since(start))
+	}
+
+	// Encode to base64
+	start = time.Now()
+	resultData := base64.StdEncoding.EncodeToString(buf.Bytes())
+	if debugMode {
+		fmt.Printf("DEBUG: Base64 encode took %v\n", time.Since(start))
+	}
+
+	if debugMode {
+		fmt.Printf("DEBUG: Total processVideoFrame took %v\n", time.Since(startTotal))
+	}
+	return map[string]interface{}{
+		"imageData": "data:image/png;base64," + resultData,
+		"frameNumber": req.FrameNumber,
 	}
 }
 
