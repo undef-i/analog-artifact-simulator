@@ -625,7 +625,11 @@ func (p *NtscProcessor) chromaFromLuma(yiq *YIQImage, field, fieldno, subcarrier
 		}
 
 		for i := 0; i < width; i++ {
-			buf.chroma[i] = buf.chroma[i] * 50 / int32(subcarrierAmplitude)
+			if subcarrierAmplitude != 0 {
+				buf.chroma[i] = buf.chroma[i] * 50 / int32(subcarrierAmplitude)
+			} else {
+				buf.chroma[i] = 0
+			}
 		}
 
 		cxiCount := 0
@@ -1098,12 +1102,20 @@ func (p *NtscProcessor) vhsEdgeWave(yiq *YIQImage, field int) {
 		for i, y := 0, field; y < height; i, y = i+1, y+2 {
 			if rnds[i] != 0 {
 				shift := int(rnds[i])
+				// Create a temporary buffer for the row
+				rowStart := comp*height*width + y*width
+				originalRow := make([]int32, width)
+				copy(originalRow, yiq.Data[rowStart:rowStart+width])
+
+				// Apply shift with padding (similar to numpy.pad)
 				for x := 0; x < width; x++ {
 					srcX := x - shift
 					if srcX >= 0 && srcX < width {
-						yiq.Data[comp*height*width+y*width+x] = yiq.Data[comp*height*width+y*width+srcX]
+						yiq.Data[rowStart+x] = originalRow[srcX]
+					} else if srcX < 0 {
+						yiq.Data[rowStart+x] = originalRow[0]
 					} else {
-						yiq.Data[comp*height*width+y*width+x] = 0
+						yiq.Data[rowStart+x] = originalRow[width-1]
 					}
 				}
 			}

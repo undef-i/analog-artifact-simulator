@@ -29,8 +29,18 @@ onmessage = function(e) {
         }
     } else if (type === 'processImage') {
         try {
+            let imageData, config, requestId;
+            
+            if (e.data.request) {
+                ({ imageData, config, requestId } = e.data.request);
+            } else {
+                imageData = e.data.imageData;
+                config = e.data.config || {};
+                requestId = e.data.requestId;
+            }
+            
             const startTime = performance.now();
-            const result = processNTSC(JSON.stringify(request));
+            const result = processNTSC(JSON.stringify({ imageData, config }));
             const endTime = performance.now();
             const processTime = (endTime - startTime).toFixed(1);
 
@@ -38,21 +48,71 @@ onmessage = function(e) {
                 postMessage({ 
                     type: 'error', 
                     message: result.error,
-                    requestId: request.requestId 
+                    requestId: requestId 
                 });
             } else {
                 postMessage({ 
                     type: 'result', 
                     imageData: result.imageData, 
                     processTime: processTime,
-                    requestId: request.requestId 
+                    requestId: requestId 
                 });
             }
         } catch (error) {
             postMessage({ 
                 type: 'error', 
                 message: 'Processing failed in worker: ' + error.message,
-                requestId: request.requestId 
+                requestId: e.data.requestId || (e.data.request ? e.data.request.requestId : null) 
+            });
+        }
+    } else if (type === 'processVideoFrame') {
+        try {
+            let imageData, config, requestId, frameNumber, totalFrames, timestamp;
+            
+            if (e.data.request) {
+                ({ imageData, config, requestId, frameNumber, totalFrames, timestamp } = e.data.request);
+            } else {
+                imageData = e.data.imageData;
+                config = e.data.config || {};
+                requestId = e.data.requestId;
+                frameNumber = e.data.frameNumber || 0;
+                totalFrames = e.data.totalFrames;
+                timestamp = e.data.timestamp;
+            }
+            
+            const startTime = performance.now();
+            const result = processVideoFrame(JSON.stringify({ 
+                imageData, 
+                config, 
+                frameNumber, 
+                totalFrames, 
+                timestamp 
+            }));
+            const endTime = performance.now();
+            const processTime = (endTime - startTime).toFixed(1);
+
+            if (result.error) {
+                postMessage({ 
+                    type: 'error', 
+                    message: result.error,
+                    requestId: requestId,
+                    frameNumber: frameNumber
+                });
+            } else {
+                postMessage({ 
+                    type: 'videoFrameResult', 
+                    imageData: result.imageData, 
+                    processTime: processTime,
+                    requestId: requestId,
+                    frameNumber: result.frameNumber || frameNumber
+                });
+            }
+        } catch (error) {
+            postMessage({ 
+                type: 'error', 
+                message: 'Video frame processing failed in worker: ' + error.message,
+                requestId: e.data.requestId || (e.data.request ? e.data.request.requestId : null),
+                frameNumber: e.data.frameNumber || (e.data.request ? e.data.request.frameNumber : null)
             });
         }
     } else if (type === 'getPreset') {
